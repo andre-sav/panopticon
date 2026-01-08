@@ -63,7 +63,8 @@ workflow_status:
 
       - id: "create-ux-design"
         name: "UX Design"
-        status: "conditional:if_has_ui"
+        status: "ux-design-specification.md"
+        completed: "2026-01-07"
         agent: "ux-designer"
         command: "/bmad:bmm:workflows:create-ux-design"
 
@@ -73,13 +74,15 @@ workflow_status:
     workflows:
       - id: "create-architecture"
         name: "Architecture"
-        status: "required"
+        status: "architecture.md"
+        completed: "2026-01-07"
         agent: "architect"
         command: "/bmad:bmm:workflows:create-architecture"
 
       - id: "create-epics-and-stories"
         name: "Epics & Stories"
-        status: "required"
+        status: "epics.md"
+        completed: "2026-01-08"
         agent: "pm"
         command: "/bmad:bmm:workflows:create-epics-and-stories"
 
