@@ -684,157 +684,121 @@ So that **I can organize the data in the way that's most useful for my current t
 
 Damione can click on a lead to see detailed stage progression, when changes occurred, and time spent in each stage.
 
+**Consolidated from 6 stories to 2 (per Epic 3 retrospective learnings)**
+
+**FRs covered:** FR4, FR16, FR17, FR18, FR19, FR20, FR31
+
 ### Story 4.1: Lead Detail View
 
 As **Damione (Coordinator)**,
-I want **to click on a lead to see more detailed information**,
+I want **to click on a lead to see detailed information including current stage status**,
 So that **I can understand the full context of a lead before taking action**.
 
 **Acceptance Criteria:**
 
-**Given** the lead table is displayed
-**When** I click on a lead row (or a "View Details" action)
-**Then** a detail view expands or displays showing:
-- Lead name (header)
-- Appointment date and time
-- Days since appointment
-- Current stage
-- Locator name with contact info
-- Stage history (from Story 4.3)
+**Detail View Display (formerly 4.1):**
 
-**Given** the detail view is open
-**When** I want to close it
-**Then** I can collapse/close the detail view and return to the table
+1. **Given** the lead table is displayed
+   **When** I click on a lead row (or a "View Details" action)
+   **Then** a detail view expands or displays showing:
+   - Lead name (header)
+   - Appointment date and time
+   - Days since appointment
+   - Locator name with contact info (phone/email links)
 
-**And** the detail view does not navigate away from the main dashboard
-**And** detail information is loaded from cached data (no additional API call if already fetched)
+2. **Given** the detail view is open
+   **When** I want to close it
+   **Then** I can collapse/close the detail view and return to the table
+
+3. **And** the detail view does not navigate away from the main dashboard
+   **And** detail information is loaded from cached data (no additional API call)
+
+**Current Stage Display (formerly 4.2):**
+
+4. **Given** a lead is displayed in the detail view
+   **When** I look at the stage section
+   **Then** the current stage is prominently displayed
+   **And** it's visually emphasized (larger text or highlighted)
+
+5. **Given** the stage value from Zoho is "Appt Not Acknowledged"
+   **When** displayed
+   **Then** it shows exactly as received from Zoho (no transformation)
+
+**Time in Current Stage (formerly 4.5):**
+
+6. **Given** a lead's detail view is displayed
+   **When** I look at the current stage section
+   **Then** I see "In this stage for: X days" (or hours if less than 1 day)
+
+7. **Given** a lead entered current stage 3 days ago
+   **When** time is calculated
+   **Then** it shows "In this stage for: 3 days"
+
+8. **And** calculation uses the most recent stage change timestamp
+   **And** this is calculated in data_processing.py (pure function)
+
+**Implementation Notes:**
+- Use Streamlit expander or modal for detail view
+- Stage display in table already implemented (Story 1.4)
+- Time in stage calculation requires stage history data
 
 ---
 
-### Story 4.2: Current Stage Display
+### Story 4.2: Stage History & Transitions
 
 As **Damione (Coordinator)**,
-I want **to see the current stage of each lead clearly displayed**,
-So that **I know where each lead is in the pipeline at a glance**.
-
-**Acceptance Criteria:**
-
-**Given** a lead is displayed in the table
-**When** I look at the Stage column
-**Then** the current stage is displayed (e.g., "Appt Set", "Green", "Delivered")
-
-**Given** a lead is displayed in the detail view
-**When** I look at the stage section
-**Then** the current stage is prominently displayed
-**And** it's visually emphasized (larger text or highlighted)
-
-**Given** the stage value from Zoho is "Appt Not Acknowledged"
-**When** displayed
-**Then** it shows exactly as received from Zoho (no transformation that could cause confusion)
-
----
-
-### Story 4.3: Stage Transition History
-
-As **Damione (Coordinator)**,
-I want **to view the history of stage transitions for a lead**,
+I want **to view the history of stage transitions with timestamps**,
 So that **I can see how the lead has progressed (or stalled) over time**.
 
 **Acceptance Criteria:**
 
-**Given** I open the detail view for a lead
-**When** I look at the stage history section
-**Then** I see a list of all stage changes in chronological order:
-- Previous stage -> New stage
-- Date/time of change
+**Stage History Display (formerly 4.3):**
 
-**Given** a lead has moved through 4 stages
-**When** viewing history
-**Then** all 4 transitions are shown (e.g., "New -> Appt Set -> Appt Ack -> Green")
+1. **Given** I open the detail view for a lead
+   **When** I look at the stage history section
+   **Then** I see a list of all stage changes in chronological order:
+   - Previous stage → New stage
+   - Date/time of change
 
-**Given** a lead has only been in one stage (no transitions)
-**When** viewing history
-**Then** a message shows: "No stage changes recorded" or shows initial stage only
+2. **Given** a lead has moved through 4 stages
+   **When** viewing history
+   **Then** all 4 transitions are shown (e.g., "New → Appt Set → Appt Ack → Green")
 
-**And** stage history is fetched via `get_stage_history()` in zoho_client.py (FR31)
+3. **Given** a lead has only been in one stage (no transitions)
+   **When** viewing history
+   **Then** a message shows: "No stage changes recorded" or shows initial stage only
 
----
+**Timestamp Formatting (formerly 4.4):**
 
-### Story 4.4: Stage Change Timestamps
+4. **Given** the stage history is displayed
+   **When** I look at each transition
+   **Then** the date and time of the change is shown (e.g., "Jan 5, 2026 at 2:30 PM")
 
-As **Damione (Coordinator)**,
-I want **to see when each stage change occurred**,
-So that **I can understand the timeline of the lead's progression**.
+5. **Given** a stage change happened today
+   **When** displayed
+   **Then** it shows "Today at 2:30 PM" or similar relative format
 
-**Acceptance Criteria:**
+6. **Given** a stage change happened yesterday
+   **When** displayed
+   **Then** it shows "Yesterday at 10:00 AM" or the full date
 
-**Given** the stage history is displayed
-**When** I look at each transition
-**Then** the date and time of the change is shown (e.g., "Jan 5, 2026 at 2:30 PM")
+7. **And** timestamps are displayed in a consistent format throughout
+   **And** timezone is handled appropriately (display in local time)
 
-**Given** a stage change happened today
-**When** displayed
-**Then** it shows "Today at 2:30 PM" or similar relative format
+**Pipeline Context (formerly 4.6):**
 
-**Given** a stage change happened yesterday
-**When** displayed
-**Then** it shows "Yesterday at 10:00 AM" or the full date
+8. **Given** a lead has reached "Green" stage
+   **When** viewing the stage history
+   **Then** the progression through Green → Delivery pipeline is visible
 
-**And** timestamps are displayed in a consistent format throughout
-**And** timezone is handled appropriately (display in local time)
+9. **Given** a lead reaches "Delivered" stage
+   **When** viewing the lead
+   **Then** it's clear this lead has completed the pipeline successfully
 
----
-
-### Story 4.5: Time in Current Stage
-
-As **Damione (Coordinator)**,
-I want **to see how long a lead has been in its current stage**,
-So that **I can identify leads that are stuck even if they're not flagged as stale**.
-
-**Acceptance Criteria:**
-
-**Given** a lead's detail view is displayed
-**When** I look at the current stage section
-**Then** I see "In this stage for: X days" (or hours if less than 1 day)
-
-**Given** a lead entered current stage 3 days ago
-**When** time is calculated
-**Then** it shows "In this stage for: 3 days"
-
-**Given** a lead entered current stage 2 hours ago
-**When** time is calculated
-**Then** it shows "In this stage for: 2 hours"
-
-**And** calculation uses the most recent stage change timestamp
-**And** this is calculated in data_processing.py (pure function)
-
----
-
-### Story 4.6: Green to Delivery Pipeline Tracking
-
-As **Damione (Coordinator)**,
-I want **to track leads through the Green -> Delivery pipeline stages**,
-So that **I can ensure approved leads actually get delivered**.
-
-**Acceptance Criteria:**
-
-**Given** a lead has reached "Green" stage
-**When** viewing the lead in the table or detail view
-**Then** I can see its current position in the Green -> Delivery pipeline
-
-**Given** I want to see all leads in Green stages
-**When** I filter by stage (Epic 3)
-**Then** I can filter to "Green", "Green - Pending", "Delivery Requested", "Delivered", etc.
-
-**Given** a lead has been in "Green" for an extended period
-**When** viewing the lead
-**Then** the time in stage (Story 4.5) helps identify stuck leads
-
-**Given** a lead reaches "Delivered" stage
-**When** viewing the lead
-**Then** it's clear this lead has completed the pipeline successfully
-
-**And** the stage progression for Green -> Delivery is defined in field_mapping.py
+**Implementation Notes:**
+- Stage history fetched via `get_stage_history()` in zoho_client.py (FR31)
+- Reuse `format_last_updated()` pattern for relative timestamps
+- Stage filtering by Green/Delivered already available (Story 3.1)
 
 ---
 
@@ -842,132 +806,109 @@ So that **I can ensure approved leads actually get delivered**.
 
 Damione can view appointments on a calendar interface and navigate by day, week, or custom date range.
 
-### Story 5.1: Calendar Interface
+> **Note:** This epic was consolidated from 5 stories to 2 during the Epic 4 retrospective:
+> - Story 5.1 now includes calendar interface + navigation (original 5.1 + 5.5)
+> - Story 5.2 now includes custom date range selection (original 5.4), since "Today" and "This Week" filtering is already implemented in Story 3.1
+> - Original stories 5.2 (Today's Appointments) and 5.3 (Weekly Appointments) were redundant with Story 3.1's date range filter presets
+
+**FRs covered:** FR11, FR12, FR13, FR14, FR15
+
+### Story 5.1: Calendar Interface & Navigation
 
 As **Damione (Coordinator)**,
-I want **to view appointments on a calendar interface**,
+I want **to view appointments on a calendar interface and navigate between time periods**,
 So that **I can see the temporal distribution of appointments and identify busy/quiet periods**.
 
 **Acceptance Criteria:**
 
-**Given** the dashboard has a calendar view option
-**When** I switch to or access the calendar view
-**Then** I see a monthly calendar grid showing appointment counts per day
+**Calendar Interface (FR11):**
 
-**Given** January 7, 2026 has 5 appointments
-**When** looking at that date on the calendar
-**Then** the date cell shows "5" or a visual indicator of appointment density
+1. **Given** the dashboard has a calendar view option
+   **When** I switch to or access the calendar view
+   **Then** I see a monthly calendar grid showing appointment counts per day
 
-**Given** I click on a date with appointments
-**When** the date is selected
-**Then** the lead table below/beside filters to show only appointments for that date
+2. **Given** January 7, 2026 has 5 appointments
+   **When** looking at that date on the calendar
+   **Then** the date cell shows "5" or a visual indicator of appointment density
 
-**And** the calendar uses Streamlit-compatible components
-**And** past dates with appointments are still visible
-**And** stale/at-risk indicators are visible on calendar dates (color coding)
+3. **Given** I click on a date with appointments
+   **When** the date is selected
+   **Then** the lead table below/beside filters to show only appointments for that date
 
----
+4. **And** the calendar uses Streamlit-compatible components
+   **And** past dates with appointments are still visible
+   **And** stale/at-risk indicators are visible on calendar dates (color coding)
 
-### Story 5.2: Today's Appointments View
+**Time Period Navigation (FR15):**
 
-As **Damione (Coordinator)**,
-I want **to quickly see all appointments scheduled for today**,
-So that **I can focus on what's happening right now**.
+5. **Given** I'm viewing "This Week" (Jan 6-12)
+   **When** I click "Next Week" or a forward arrow
+   **Then** the view shifts to the next week (Jan 13-19)
 
-**Acceptance Criteria:**
+6. **Given** I'm viewing "This Week"
+   **When** I click "Previous Week" or a back arrow
+   **Then** the view shifts to the previous week (Dec 30 - Jan 5)
 
-**Given** the calendar or timeline view is displayed
-**When** I select "Today" view
-**Then** only leads with appointments on today's date are shown
+7. **Given** I'm viewing a specific month on the calendar
+   **When** I use month navigation
+   **Then** I can move to previous/next month
 
-**Given** today is January 8, 2026
-**When** "Today" filter is applied
-**Then** only leads with appointment date = January 8, 2026 are displayed
+8. **Given** I've navigated away from the current period
+   **When** I want to return quickly
+   **Then** a "Today" or "Current Week" button returns me to the present
 
-**Given** there are no appointments today
-**When** "Today" view is selected
-**Then** a message shows: "No appointments scheduled for today"
+9. **And** navigation controls are intuitive (arrows, buttons)
+   **And** the current viewed period is clearly displayed (e.g., "Week of Jan 6, 2026")
 
-**And** "Today" is a quick-access button or prominent option
-**And** the view updates if the dashboard is left open past midnight
-
----
-
-### Story 5.3: Weekly Appointments View
-
-As **Damione (Coordinator)**,
-I want **to view all appointments for the current week**,
-So that **I can plan my follow-up activities for the week ahead**.
-
-**Acceptance Criteria:**
-
-**Given** the calendar or timeline view is displayed
-**When** I select "This Week" view
-**Then** only leads with appointments in the current calendar week are shown
-
-**Given** today is Wednesday, January 8, 2026
-**When** "This Week" is selected
-**Then** appointments from Monday Jan 6 through Sunday Jan 12 are shown
-
-**Given** viewing the week
-**When** looking at the display
-**Then** appointments are organized by day or clearly show their date
-
-**And** "This Week" includes both past days (Mon-Tue) and future days (Thu-Sun) of the current week
+**Implementation Notes:**
+- Use Streamlit-compatible calendar component (e.g., streamlit-calendar or custom with st.columns)
+- Calendar view is supplemental to existing table view, not a replacement
+- Click-to-filter interaction connects calendar to existing filter system
 
 ---
 
-### Story 5.4: Custom Date Range Selection
+### Story 5.2: Custom Date Range Selection
 
 As **Damione (Coordinator)**,
-I want **to select a custom date range to view appointments**,
+I want **to select a custom date range with specific start and end dates**,
 So that **I can analyze any specific time period I'm interested in**.
 
-**Acceptance Criteria:**
-
-**Given** the timeline/date filter options are displayed
-**When** I select "Custom Range"
-**Then** date picker controls appear for start date and end date
-
-**Given** I select start = "January 1, 2026" and end = "January 15, 2026"
-**When** the custom range is applied
-**Then** only leads with appointments between Jan 1-15 (inclusive) are shown
-
-**Given** I select an invalid range (start after end)
-**When** attempting to apply
-**Then** a validation message shows: "Start date must be before end date"
-
-**Given** I select a range with no appointments
-**When** the filter is applied
-**Then** a message shows: "No appointments in selected date range"
-
-**And** the date pickers use Streamlit's `st.date_input()` component
-
----
-
-### Story 5.5: Time Period Navigation
-
-As **Damione (Coordinator)**,
-I want **to navigate between different time periods easily**,
-So that **I can move forward and backward through the calendar without re-selecting ranges**.
+> **Note:** Basic date filtering ("Today", "This Week", "Last 7 Days", etc.) is already implemented in Story 3.1. This story adds the ability to select arbitrary custom date ranges.
 
 **Acceptance Criteria:**
 
-**Given** I'm viewing "This Week" (Jan 6-12)
-**When** I click "Next Week" or a forward arrow
-**Then** the view shifts to the next week (Jan 13-19)
+**Custom Range Selection (FR14):**
 
-**Given** I'm viewing "This Week"
-**When** I click "Previous Week" or a back arrow
-**Then** the view shifts to the previous week (Dec 30 - Jan 5)
+1. **Given** the date range filter options are displayed
+   **When** I select "Custom Range"
+   **Then** date picker controls appear for start date and end date
 
-**Given** I'm viewing a specific month on the calendar
-**When** I use month navigation
-**Then** I can move to previous/next month
+2. **Given** I select start = "January 1, 2026" and end = "January 15, 2026"
+   **When** the custom range is applied
+   **Then** only leads with appointments between Jan 1-15 (inclusive) are shown
 
-**Given** I've navigated away from the current period
-**When** I want to return quickly
-**Then** a "Today" or "Current Week" button returns me to the present
+3. **Given** I select an invalid range (start after end)
+   **When** attempting to apply
+   **Then** a validation message shows: "Start date must be before end date"
 
-**And** navigation controls are intuitive (arrows, buttons)
-**And** the current viewed period is clearly displayed (e.g., "Week of Jan 6, 2026")
+4. **Given** I select a range with no appointments
+   **When** the filter is applied
+   **Then** a message shows: "No appointments in selected date range"
+
+5. **And** the date pickers use Streamlit's `st.date_input()` component
+
+**Today/Weekly Views (FR12, FR13) - Already Implemented:**
+
+6. **Given** the date range filter in Story 3.1
+   **When** I select "Today" preset
+   **Then** only leads with appointments on today's date are shown (FR12)
+
+7. **Given** the date range filter in Story 3.1
+   **When** I select "This Week" preset
+   **Then** only leads with appointments in the current calendar week are shown (FR13)
+
+**Implementation Notes:**
+- Extend existing DATE_RANGE_PRESETS in data_processing.py to include "Custom Range"
+- Custom range triggers st.date_input() components for start/end dates
+- Validate that start_date <= end_date before applying filter
+- Custom range values stored in st.session_state

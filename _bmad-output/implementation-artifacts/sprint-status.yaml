@@ -60,26 +60,19 @@ development_status:
   epic-2-retrospective: done
 
   # Epic 3: Filtering & Sorting (consolidated from 6 to 2 stories per Epic 2 retro)
-  epic-3: backlog
-  3-1-filter-implementation: backlog
-  3-2-user-selectable-sorting: backlog
+  epic-3: done
+  3-1-filter-implementation: done
+  3-2-user-selectable-sorting: done
   epic-3-retrospective: optional
 
-  # Epic 4: Lead Details & Stage History
-  epic-4: backlog
-  4-1-lead-detail-view: backlog
-  4-2-current-stage-display: backlog
-  4-3-stage-transition-history: backlog
-  4-4-stage-change-timestamps: backlog
-  4-5-time-in-current-stage: backlog
-  4-6-green-to-delivery-pipeline-tracking: backlog
+  # Epic 4: Lead Details & Stage History (consolidated from 6 to 2 stories)
+  epic-4: done
+  4-1-lead-detail-view: done
+  4-2-stage-history-transitions: done
   epic-4-retrospective: optional
 
-  # Epic 5: Calendar & Timeline View
+  # Epic 5: Calendar & Timeline View (consolidated from 5 to 2 stories per Epic 4 retro)
   epic-5: backlog
-  5-1-calendar-interface: backlog
-  5-2-todays-appointments-view: backlog
-  5-3-weekly-appointments-view: backlog
-  5-4-custom-date-range-selection: backlog
-  5-5-time-period-navigation: backlog
+  5-1-calendar-interface-navigation: backlog
+  5-2-custom-date-range-selection: backlog
   epic-5-retrospective: optional

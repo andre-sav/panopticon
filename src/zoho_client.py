@@ -530,3 +530,76 @@ def get_leads_with_appointments() -> list[dict]:
         logger.error("Error processing lead data: %s", type(e).__name__)
         _set_error(f"Error processing lead data: {type(e).__name__}", ERROR_TYPE_UNKNOWN)
         return []
+
+
+def get_stage_history(lead_id: str) -> list[dict] | None:
+    """
+    Fetch stage transition history for a lead from Zoho CRM Timeline API.
+
+    Args:
+        lead_id: The Zoho CRM lead ID
+
+    Returns:
+        List of stage transition dictionaries in chronological order (oldest first).
+        Each dictionary contains:
+            - "from_stage": Previous stage (None for initial stage)
+            - "to_stage": New stage
+            - "changed_at": datetime of the change (UTC)
+
+        Returns empty list [] if no stage history exists.
+        Returns None if API error occurs (distinguishes error from empty).
+
+    Note:
+        Uses Zoho CRM Timeline API to get field change history.
+        Filters for Stage field changes only.
+    """
+    _init_session_state()
+    logger.info("Fetching stage history for lead %s", lead_id)
+
+    url = f"{get_api_domain()}/crm/v2/Leads/{lead_id}/__timeline"
+    params = {
+        "per_page": 100,  # Get up to 100 timeline events
+        "filter": "field_update",  # Only field updates
+    }
+
+    try:
+        response = _make_request("GET", url, params=params)
+        if response is None:
+            logger.warning("Failed to fetch stage history for lead %s", lead_id)
+            return None  # API error - distinct from empty history
+
+        data = response.json()
+        timeline_events = data.get("__timeline", [])
+
+        # Filter for Stage field changes and extract transition info
+        stage_transitions = []
+        for event in timeline_events:
+            # Check if this event contains a Stage field change
+            field_history = event.get("field_history", [])
+            for field_change in field_history:
+                if field_change.get("api_name") == "Stage":
+                    # Parse the timestamp
+                    done_time = event.get("done_time")
+                    changed_at = parse_zoho_date(done_time)
+
+                    transition = {
+                        "from_stage": field_change.get("_previous_value"),
+                        "to_stage": field_change.get("_value"),
+                        "changed_at": changed_at,
+                    }
+                    stage_transitions.append(transition)
+
+        # Sort by timestamp (oldest first for chronological order)
+        stage_transitions.sort(
+            key=lambda x: x["changed_at"] if x["changed_at"] else datetime.min.replace(tzinfo=timezone.utc)
+        )
+
+        logger.info("Found %d stage transitions for lead %s", len(stage_transitions), lead_id)
+        return stage_transitions
+
+    except JSONDecodeError:
+        logger.error("Invalid JSON response from Zoho CRM timeline API")
+        return None  # API error
+    except (KeyError, TypeError, AttributeError) as e:
+        logger.error("Error processing stage history: %s", type(e).__name__)
+        return None  # Processing error

@@ -934,3 +934,129 @@ class TestErrorTypeConstants:
             zoho_client.ERROR_TYPE_UNKNOWN,
         ]
         assert len(types) == len(set(types))
+
+
+class TestGetStageHistory:
+    """Tests for get_stage_history function (Story 4.2)."""
+
+    def test_successful_fetch_returns_stage_transitions(self, mock_st):
+        """Successful API call returns list of stage transitions."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "__timeline": [
+                {
+                    "done_time": "2026-01-05T10:00:00-05:00",
+                    "field_history": [
+                        {
+                            "api_name": "Stage",
+                            "_previous_value": "Appt Set",
+                            "_value": "Green",
+                        }
+                    ]
+                },
+                {
+                    "done_time": "2026-01-03T09:00:00-05:00",
+                    "field_history": [
+                        {
+                            "api_name": "Stage",
+                            "_previous_value": None,
+                            "_value": "Appt Set",
+                        }
+                    ]
+                }
+            ]
+        }
+
+        with patch('requests.request', return_value=mock_response):
+            with patch.object(zoho_client, 'get_access_token', return_value='test-token'):
+                result = zoho_client.get_stage_history("12345")
+
+        assert len(result) == 2
+        # Should be sorted chronologically (oldest first)
+        assert result[0]["to_stage"] == "Appt Set"
+        assert result[1]["to_stage"] == "Green"
+
+    def test_empty_timeline_returns_empty_list(self, mock_st):
+        """Empty timeline response returns empty list."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"__timeline": []}
+
+        with patch('requests.request', return_value=mock_response):
+            with patch.object(zoho_client, 'get_access_token', return_value='test-token'):
+                result = zoho_client.get_stage_history("12345")
+
+        assert result == []
+
+    def test_no_stage_changes_returns_empty_list(self, mock_st):
+        """Timeline with no Stage field changes returns empty list."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "__timeline": [
+                {
+                    "done_time": "2026-01-05T10:00:00-05:00",
+                    "field_history": [
+                        {
+                            "api_name": "Email",  # Not Stage
+                            "_previous_value": "old@email.com",
+                            "_value": "new@email.com",
+                        }
+                    ]
+                }
+            ]
+        }
+
+        with patch('requests.request', return_value=mock_response):
+            with patch.object(zoho_client, 'get_access_token', return_value='test-token'):
+                result = zoho_client.get_stage_history("12345")
+
+        assert result == []
+
+    def test_api_error_returns_none(self, mock_st):
+        """API error returns None (distinguishes from empty history)."""
+        with patch.object(zoho_client, '_make_request', return_value=None):
+            result = zoho_client.get_stage_history("12345")
+
+        assert result is None
+
+    def test_json_decode_error_returns_none(self, mock_st):
+        """JSON decode error returns None (distinguishes from empty history)."""
+        from json import JSONDecodeError
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.side_effect = JSONDecodeError("Invalid JSON", "", 0)
+
+        with patch('requests.request', return_value=mock_response):
+            with patch.object(zoho_client, 'get_access_token', return_value='test-token'):
+                result = zoho_client.get_stage_history("12345")
+
+        assert result is None
+
+    def test_parses_timestamps_correctly(self, mock_st):
+        """Timestamps are parsed to datetime objects."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "__timeline": [
+                {
+                    "done_time": "2026-01-05T10:30:00-05:00",
+                    "field_history": [
+                        {
+                            "api_name": "Stage",
+                            "_previous_value": "Appt Set",
+                            "_value": "Green",
+                        }
+                    ]
+                }
+            ]
+        }
+
+        with patch('requests.request', return_value=mock_response):
+            with patch.object(zoho_client, 'get_access_token', return_value='test-token'):
+                result = zoho_client.get_stage_history("12345")
+
+        assert len(result) == 1
+        assert result[0]["changed_at"] is not None
+        assert isinstance(result[0]["changed_at"], datetime)
