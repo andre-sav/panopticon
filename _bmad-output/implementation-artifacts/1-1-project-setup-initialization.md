@@ -1,6 +1,6 @@
 # Story 1.1: Project Setup & Initialization
 
-Status: review
+Status: done
 
 ## Story
 
@@ -248,11 +248,12 @@ N/A - Project setup story, no debug logs needed
 ### Change Log
 
 - 2026-01-08: Initial project setup complete - all files created per architecture spec
+- 2026-01-08: Added unit tests for data_processing.py (13 tests, all passing)
 
 ### File List
 
 - app.py (created)
-- requirements.txt (created)
+- requirements.txt (created, updated with pytest)
 - .gitignore (created)
 - .streamlit/config.toml (created)
 - .streamlit/secrets.example.toml (created)
@@ -260,3 +261,5 @@ N/A - Project setup story, no debug logs needed
 - src/zoho_client.py (created)
 - src/data_processing.py (created)
 - src/field_mapping.py (created)
+- tests/__init__.py (created)
+- tests/test_data_processing.py (created)
