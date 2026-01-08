@@ -8,9 +8,12 @@ Responsibilities:
 - Error handling for API calls
 - Lead data fetching
 """
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 import requests
 import streamlit as st
@@ -86,10 +89,12 @@ def refresh_access_token() -> Optional[str]:
         On failure, stores error message in st.session_state.zoho_error
     """
     _init_session_state()
+    logger.info("Refreshing Zoho access token")
 
     try:
         credentials = _get_credentials()
     except KeyError:
+        logger.error("Zoho credentials not configured in secrets")
         _set_error(
             "Zoho credentials not configured. "
             "Please check .streamlit/secrets.toml configuration.",
@@ -105,11 +110,13 @@ def refresh_access_token() -> Optional[str]:
     }
 
     try:
+        start_time = time.time()
         response = requests.post(
             OAUTH_TOKEN_URL,
             data=payload,
             timeout=REQUEST_TIMEOUT,
         )
+        elapsed = time.time() - start_time
 
         if response.status_code == 200:
             data = response.json()
@@ -123,9 +130,11 @@ def refresh_access_token() -> Optional[str]:
             )
             _clear_error()
 
+            logger.info("Token refresh successful (%.2fs), expires in %ds", elapsed, expires_in)
             return access_token
         else:
             # Auth failed - do NOT log credentials (AC#4)
+            logger.error("Token refresh failed: HTTP %d (%.2fs)", response.status_code, elapsed)
             _set_error(
                 "Session expired. Please refresh the page to reconnect.",
                 ERROR_TYPE_AUTH,
@@ -133,19 +142,22 @@ def refresh_access_token() -> Optional[str]:
             return None
 
     except requests.exceptions.Timeout:
+        logger.error("Token refresh timed out after %ds", REQUEST_TIMEOUT)
         _set_error(
             "Request timed out. Zoho may be slow. Please try again.",
             ERROR_TYPE_TIMEOUT,
         )
         return None
-    except requests.exceptions.ConnectionError:
+    except requests.exceptions.ConnectionError as e:
+        logger.error("Token refresh connection error: %s", type(e).__name__)
         _set_error(
             "Unable to connect to Zoho CRM. "
             "Please check your connection and try again.",
             ERROR_TYPE_CONNECTION,
         )
         return None
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as e:
+        logger.error("Token refresh request error: %s", type(e).__name__)
         _set_error(
             "An error occurred while connecting to Zoho CRM. "
             "Please try again.",
@@ -237,7 +249,11 @@ def _make_request(
         "Content-Type": "application/json",
     }
 
+    # Log request (exclude auth header)
+    logger.debug("API request: %s %s", method, url)
+
     try:
+        start_time = time.time()
         response = requests.request(
             method=method,
             url=url,
@@ -246,9 +262,13 @@ def _make_request(
             json=json_data,
             timeout=REQUEST_TIMEOUT,
         )
+        elapsed = time.time() - start_time
+
+        logger.debug("API response: %d (%.2fs)", response.status_code, elapsed)
 
         # Handle 401 Unauthorized - token may have expired
         if response.status_code == 401 and retry_on_401:
+            logger.warning("Got 401, refreshing token and retrying")
             # Force token refresh and retry once
             st.session_state.zoho_access_token = None
             st.session_state.zoho_token_expiry = None
@@ -267,6 +287,12 @@ def _make_request(
 
             # Retry if we haven't exceeded max retries
             if _rate_limit_retries < MAX_RATE_LIMIT_RETRIES:
+                logger.warning(
+                    "Rate limited (429), retry %d/%d after %ds",
+                    _rate_limit_retries + 1,
+                    MAX_RATE_LIMIT_RETRIES,
+                    retry_after,
+                )
                 time.sleep(retry_after)
                 return _make_request(
                     method=method,
@@ -278,6 +304,7 @@ def _make_request(
                 )
             else:
                 # Max retries exceeded
+                logger.error("Rate limit retries exhausted")
                 _set_error(
                     "Too many requests to Zoho CRM. "
                     "Rate limit exceeded after retries. Please try again later.",
@@ -287,6 +314,7 @@ def _make_request(
 
         # Handle other error status codes
         if response.status_code >= 400:
+            logger.error("API error: HTTP %d", response.status_code)
             _set_error(
                 f"Zoho CRM returned an error (status {response.status_code}). "
                 "Please try again or contact support if the issue persists.",
@@ -299,19 +327,22 @@ def _make_request(
         return response
 
     except requests.exceptions.Timeout:
+        logger.error("API request timed out after %ds", REQUEST_TIMEOUT)
         _set_error(
             "Request timed out. Zoho may be slow. Please try again.",
             ERROR_TYPE_TIMEOUT,
         )
         return None
-    except requests.exceptions.ConnectionError:
+    except requests.exceptions.ConnectionError as e:
+        logger.error("API connection error: %s", type(e).__name__)
         _set_error(
             "Unable to connect to Zoho CRM. "
             "Please check your connection and try again.",
             ERROR_TYPE_CONNECTION,
         )
         return None
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as e:
+        logger.error("API request error: %s", type(e).__name__)
         _set_error(
             "An error occurred while communicating with Zoho CRM. "
             "Please try again.",
@@ -466,6 +497,7 @@ def get_leads_with_appointments() -> list[dict]:
         }
     """
     _init_session_state()
+    logger.info("Fetching leads with appointments")
 
     # Build field list from mapping
     fields = ",".join(ZOHO_FIELD_MAP.keys())
@@ -480,16 +512,21 @@ def get_leads_with_appointments() -> list[dict]:
     try:
         response = _make_request("GET", url, params=params)
         if response is None:
+            logger.warning("Failed to fetch leads (no response)")
             return []  # Error already captured in _make_request
 
         data = response.json()
         leads_data = data.get("data", [])
 
-        return [_map_and_parse_lead(lead) for lead in leads_data]
+        leads = [_map_and_parse_lead(lead) for lead in leads_data]
+        logger.info("Fetched %d leads with appointments", len(leads))
+        return leads
 
     except JSONDecodeError:
+        logger.error("Invalid JSON response from Zoho CRM")
         _set_error("Invalid response from Zoho CRM.", ERROR_TYPE_UNKNOWN)
         return []
     except (KeyError, TypeError, AttributeError) as e:
+        logger.error("Error processing lead data: %s", type(e).__name__)
         _set_error(f"Error processing lead data: {type(e).__name__}", ERROR_TYPE_UNKNOWN)
         return []
