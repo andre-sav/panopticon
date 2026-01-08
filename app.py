@@ -2,10 +2,17 @@
 Panopticon - Lead Follow-up Management Dashboard
 Main Streamlit application entry point.
 """
+import logging
 from datetime import datetime, timezone
 
 import pandas as pd
 import streamlit as st
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s: %(message)s"
+)
 
 from src.zoho_client import (
     get_leads_with_appointments,
