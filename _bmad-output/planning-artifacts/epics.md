@@ -542,137 +542,107 @@ So that **I instantly know the overall health of my pipeline before looking at d
 
 Damione can filter leads by stage, locator, or date range, and sort by various criteria to focus on specific subsets.
 
-### Story 3.1: Filter by Stage
+> **Note:** This epic was consolidated from 6 stories to 2 during the Epic 2 retrospective to avoid redundancy. All original acceptance criteria are preserved.
+
+### Story 3.1: Filter Implementation
 
 As **Damione (Coordinator)**,
-I want **to filter leads by their current pipeline stage**,
-So that **I can focus on leads at a specific point in the process**.
+I want **to filter leads by stage, locator, and date range, with the ability to combine and clear filters**,
+So that **I can focus on specific subsets of leads relevant to my current task**.
 
 **Acceptance Criteria:**
 
-**Given** the filter row is displayed
-**When** I look at the stage filter
-**Then** a dropdown shows "All Stages" plus all available stage options from the data
+**Stage Filter (FR21):**
 
-**Given** I select "Appt Set" from the stage filter
-**When** the filter is applied
-**Then** only leads with stage "Appt Set" are shown in the table
-**And** the summary metrics update to reflect the filtered count
+1. **Given** the filter row is displayed
+   **When** I look at the stage filter
+   **Then** a dropdown shows "All Stages" plus all available stage options from the data
 
-**Given** I select "All Stages"
-**When** the filter is applied
-**Then** all leads are shown regardless of stage
+2. **Given** I select "Appt Set" from the stage filter
+   **When** the filter is applied
+   **Then** only leads with stage "Appt Set" are shown in the table
+   **And** the summary metrics update to reflect the filtered count
 
-**And** the filter uses `st.selectbox()` component
-**And** stage options are dynamically populated from field_mapping.py or data
+3. **Given** I select "All Stages"
+   **When** the filter is applied
+   **Then** all leads are shown regardless of stage
 
----
+**Locator Filter (FR23):**
 
-### Story 3.2: Filter by Locator
+4. **Given** the filter row is displayed
+   **When** I look at the locator filter
+   **Then** a dropdown shows "All Locators" plus all locator names from the data
 
-As **Damione (Coordinator)**,
-I want **to filter leads by assigned locator**,
-So that **I can see all leads for a specific locator when following up with them**.
+5. **Given** I select "Marcus Johnson" from the locator filter
+   **When** the filter is applied
+   **Then** only leads assigned to Marcus Johnson are shown
+   **And** the summary metrics update to reflect the filtered count
 
-**Acceptance Criteria:**
+6. **Given** I select "All Locators"
+   **When** the filter is applied
+   **Then** all leads are shown regardless of locator
 
-**Given** the filter row is displayed
-**When** I look at the locator filter
-**Then** a dropdown shows "All Locators" plus all locator names from the data
+**Date Range Filter (FR22):**
 
-**Given** I select "Marcus Johnson" from the locator filter
-**When** the filter is applied
-**Then** only leads assigned to Marcus Johnson are shown
-**And** the summary metrics update to reflect the filtered count
+7. **Given** the filter row is displayed
+   **When** I look at the date range filter
+   **Then** a dropdown shows preset options:
+   - "All Dates"
+   - "Today"
+   - "This Week"
+   - "This Month"
+   - "Last 7 Days"
+   - "Last 30 Days"
 
-**Given** I select "All Locators"
-**When** the filter is applied
-**Then** all leads are shown regardless of locator
+8. **Given** I select "This Week"
+   **When** the filter is applied
+   **Then** only leads with appointments in the current week are shown
 
-**And** locator names are populated dynamically from the fetched data
-**And** the filter is case-insensitive for matching
+9. **Given** I select "Last 7 Days"
+   **When** the filter is applied
+   **Then** only leads with appointments in the past 7 days are shown
 
----
+**Combined Filters (FR24):**
 
-### Story 3.3: Filter by Date Range
+10. **Given** I select "Appt Set" for stage AND "Marcus Johnson" for locator
+    **When** both filters are applied
+    **Then** only leads that match BOTH criteria are shown (AND logic)
+    **And** the summary metrics reflect the combined filter result
 
-As **Damione (Coordinator)**,
-I want **to filter leads by appointment date range**,
-So that **I can focus on appointments from a specific time period**.
+11. **Given** I have stage="Appt Set", locator="Marcus", date="This Week"
+    **When** all three filters are applied
+    **Then** only leads matching ALL three criteria are shown
 
-**Acceptance Criteria:**
+12. **Given** the combined filters result in zero matches
+    **When** the table displays
+    **Then** a message shows: "No leads match your filters"
+    **And** a "Clear filters" option is visible
 
-**Given** the filter row is displayed
-**When** I look at the date range filter
-**Then** a dropdown shows preset options:
-- "All Dates"
-- "Today"
-- "This Week"
-- "This Month"
-- "Last 7 Days"
-- "Last 30 Days"
+**Clear Filters (FR25):**
 
-**Given** I select "This Week"
-**When** the filter is applied
-**Then** only leads with appointments in the current week are shown
+13. **Given** one or more filters are applied
+    **When** I click "Clear all filters" (or similar)
+    **Then** all filters reset to their default "All" state
+    **And** the full lead list is displayed
+    **And** the summary metrics reflect the full data
 
-**Given** I select "Last 7 Days"
-**When** the filter is applied
-**Then** only leads with appointments in the past 7 days are shown
+14. **Given** no filters are applied
+    **When** looking at the filter area
+    **Then** the "Clear all filters" option is hidden or disabled
 
-**Given** I select "All Dates"
-**When** the filter is applied
-**Then** all leads are shown regardless of appointment date
+**Implementation Notes:**
 
----
-
-### Story 3.4: Combine Multiple Filters
-
-As **Damione (Coordinator)**,
-I want **to apply multiple filters at the same time**,
-So that **I can narrow down to a very specific set of leads**.
-
-**Acceptance Criteria:**
-
-**Given** I select "Appt Set" for stage AND "Marcus Johnson" for locator
-**When** both filters are applied
-**Then** only leads that match BOTH criteria are shown (AND logic)
-**And** the summary metrics reflect the combined filter result
-
-**Given** I have stage="Appt Set", locator="Marcus", date="This Week"
-**When** all three filters are applied
-**Then** only leads matching ALL three criteria are shown
-
-**Given** the combined filters result in zero matches
-**When** the table displays
-**Then** a message shows: "No leads match your filters"
-**And** a "Clear filters" option is visible
+- Use `st.selectbox()` for stage and locator filters
+- Use `st.selectbox()` with preset options for date range filter
+- Stage options dynamically populated from data
+- Locator names dynamically populated from data
+- Locator filter matching is case-insensitive
+- Clearing filters is a single action (not one per filter)
+- All filters stored in `st.session_state`
 
 ---
 
-### Story 3.5: Clear All Filters
-
-As **Damione (Coordinator)**,
-I want **to quickly clear all filters and return to the full view**,
-So that **I can reset after investigating a specific subset**.
-
-**Acceptance Criteria:**
-
-**Given** one or more filters are applied
-**When** I click "Clear all filters" (or similar)
-**Then** all filters reset to their default "All" state
-**And** the full lead list is displayed
-**And** the summary metrics reflect the full data
-
-**Given** no filters are applied
-**When** looking at the filter area
-**Then** the "Clear all filters" option is hidden or disabled
-
-**And** clearing filters is a single action (not one per filter)
-
----
-
-### Story 3.6: Sort by Different Criteria
+### Story 3.2: User-Selectable Sorting
 
 As **Damione (Coordinator)**,
 I want **to sort leads by different columns**,
@@ -680,26 +650,33 @@ So that **I can organize the data in the way that's most useful for my current t
 
 **Acceptance Criteria:**
 
-**Given** the lead table is displayed
-**When** I interact with sort controls
-**Then** I can sort by:
-- Days since appointment (default: descending/most stale first)
-- Appointment date (ascending/descending)
-- Lead name (alphabetical)
-- Stage
-- Locator name
+1. **Given** the lead table is displayed
+   **When** I interact with sort controls
+   **Then** I can sort by:
+   - Days since appointment (default: descending/most stale first)
+   - Appointment date (ascending/descending)
+   - Lead name (alphabetical)
+   - Stage
+   - Locator name
 
-**Given** I sort by "Appointment Date (Oldest First)"
-**When** the sort is applied
-**Then** leads are ordered by appointment date ascending
-**And** the current sort is visually indicated
+2. **Given** I sort by "Appointment Date (Oldest First)"
+   **When** the sort is applied
+   **Then** leads are ordered by appointment date ascending
+   **And** the current sort is visually indicated
 
-**Given** I want to return to default sorting
-**When** I select "Default (Urgency)"
-**Then** problems-first sorting (from Story 2.5) is restored
+3. **Given** I want to return to default sorting
+   **When** I select "Default (Urgency)"
+   **Then** problems-first sorting (from Story 2.5) is restored
 
-**And** sorting works in combination with active filters
-**And** sort preference is maintained during the session
+4. **And** sorting works in combination with active filters
+   **And** sort preference is maintained during the session
+
+**Implementation Notes:**
+
+- Default sort remains `sort_by_urgency()` from Epic 2
+- Sort control uses `st.selectbox()` with sort options
+- Sort applied after filtering (filter first, then sort)
+- Sort preference stored in `st.session_state`
 
 ---
 
