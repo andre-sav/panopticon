@@ -94,7 +94,8 @@ workflow_status:
 
       - id: "implementation-readiness"
         name: "Implementation Readiness Check"
-        status: "required"
+        status: "implementation-readiness-report-2026-01-08.md"
+        completed: "2026-01-08"
         agent: "architect"
         command: "/bmad:bmm:workflows:check-implementation-readiness"
 
@@ -104,7 +105,8 @@ workflow_status:
     workflows:
       - id: "sprint-planning"
         name: "Sprint Planning"
-        status: "required"
+        status: "sprint-status.yaml"
+        completed: "2026-01-08"
         agent: "sm"
         command: "/bmad:bmm:workflows:sprint-planning"
         note: "Creates sprint-status.yaml - subsequent work tracked there"

@@ -1,0 +1,89 @@
+# generated: 2026-01-08
+# project: panopticon
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-01-08
+project: panopticon
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # Epic 1: Foundation & Lead Dashboard
+  epic-1: in-progress
+  1-1-project-setup-initialization: review
+  1-2-zoho-crm-api-connection: backlog
+  1-3-fetch-leads-with-appointments: backlog
+  1-4-lead-dashboard-display: backlog
+  1-5-manual-data-refresh: backlog
+  1-6-error-handling-graceful-degradation: backlog
+  1-7-locator-contact-actions: backlog
+  epic-1-retrospective: optional
+
+  # Epic 2: Stale Lead Detection
+  epic-2: backlog
+  2-1-days-since-appointment-calculation: backlog
+  2-2-stale-lead-detection-logic: backlog
+  2-3-at-risk-lead-detection: backlog
+  2-4-visual-status-indicators: backlog
+  2-5-problems-first-sorting: backlog
+  2-6-summary-metrics-cards: backlog
+  epic-2-retrospective: optional
+
+  # Epic 3: Filtering & Sorting
+  epic-3: backlog
+  3-1-filter-by-stage: backlog
+  3-2-filter-by-locator: backlog
+  3-3-filter-by-date-range: backlog
+  3-4-combine-multiple-filters: backlog
+  3-5-clear-all-filters: backlog
+  3-6-sort-by-different-criteria: backlog
+  epic-3-retrospective: optional
+
+  # Epic 4: Lead Details & Stage History
+  epic-4: backlog
+  4-1-lead-detail-view: backlog
+  4-2-current-stage-display: backlog
+  4-3-stage-transition-history: backlog
+  4-4-stage-change-timestamps: backlog
+  4-5-time-in-current-stage: backlog
+  4-6-green-to-delivery-pipeline-tracking: backlog
+  epic-4-retrospective: optional
+
+  # Epic 5: Calendar & Timeline View
+  epic-5: backlog
+  5-1-calendar-interface: backlog
+  5-2-todays-appointments-view: backlog
+  5-3-weekly-appointments-view: backlog
+  5-4-custom-date-range-selection: backlog
+  5-5-time-period-navigation: backlog
+  epic-5-retrospective: optional

@@ -1,20 +1,17 @@
+# Secrets (NEVER commit)
+.streamlit/secrets.toml
+
 # Python
 __pycache__/
 *.py[cod]
-.venv/
-venv/
+*$py.class
 .env
-
-# Streamlit
-.streamlit/secrets.toml
-
-# Beads (local-only files)
-.beads/beads.db
-.beads/beads.db-*
-.beads/bd.sock
-.beads/bd.pipe
-.beads/.exclusive-lock
+venv/
+.venv/
 
 # IDE
 .vscode/
 .idea/
+
+# OS
+.DS_Store
