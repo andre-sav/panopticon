@@ -24,7 +24,14 @@ from src.zoho_client import (
     clear_partial_error,
     ERROR_TYPE_AUTH,
 )
-from src.data_processing import format_leads_for_display, format_last_updated
+from src.data_processing import (
+    format_leads_for_display,
+    format_last_updated,
+    sort_by_urgency,
+    count_leads_by_status,
+    STALE_THRESHOLD_DAYS,
+    AT_RISK_THRESHOLD_DAYS,
+)
 
 # Page configuration
 st.set_page_config(
@@ -120,6 +127,34 @@ def display_partial_warning():
         st.warning(partial_error)
 
 
+def display_metrics_cards(display_data: list[dict]):
+    """Display summary metrics cards for lead status counts (Story 2.6).
+
+    Shows three metric cards:
+    - Stale count (red indicator)
+    - At Risk count (amber indicator)
+    - Healthy count (green indicator)
+
+    When stale count is 0, shows a positive signal.
+    """
+    counts = count_leads_by_status(display_data)
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        stale_count = counts["stale"]
+        if stale_count == 0:
+            st.metric(label="🔴 Stale", value=0, delta="All clear", delta_color="normal", help="No stale leads!")
+        else:
+            st.metric(label="🔴 Stale", value=stale_count, help=f"Leads {STALE_THRESHOLD_DAYS}+ days since appointment")
+
+    with col2:
+        st.metric(label="🟡 At Risk", value=counts["at_risk"], help=f"Leads {AT_RISK_THRESHOLD_DAYS}-{STALE_THRESHOLD_DAYS - 1} days since appointment")
+
+    with col3:
+        st.metric(label="🟢 Healthy", value=counts["healthy"], help=f"Leads < {AT_RISK_THRESHOLD_DAYS} days since appointment")
+
+
 def display_dashboard():
     """Main dashboard display logic."""
     # Display header with refresh controls
@@ -145,11 +180,17 @@ def display_dashboard():
 
     # Display table or empty state
     if leads:
+        # Format leads for display and sort by urgency (Story 2.5)
+        display_data = format_leads_for_display(leads)
+        display_data = sort_by_urgency(display_data)
+
+        # Display summary metrics cards (Story 2.6)
+        display_metrics_cards(display_data)
+
+        st.divider()
+
         # Display lead count above table
         st.markdown(f"**Showing {len(leads)} leads with appointments**")
-
-        # Format leads for display
-        display_data = format_leads_for_display(leads)
 
         # Convert to DataFrame for styling (Story 2.4)
         df = pd.DataFrame(display_data)

@@ -158,6 +158,63 @@ def format_leads_for_display(leads: list[dict]) -> list[dict]:
     return result
 
 
+def sort_by_urgency(leads: list[dict]) -> list[dict]:
+    """
+    Sort leads by urgency: stale first, then at_risk, then healthy.
+
+    Within each status group, sorts by days descending (oldest/most days first).
+    Leads with None days are sorted to the end.
+
+    Args:
+        leads: List of formatted lead dictionaries (from format_leads_for_display)
+
+    Returns:
+        New list sorted by urgency
+    """
+    def sort_key(lead):
+        status = lead.get("Status") or ""
+        days = lead.get("Days")
+
+        # Status priority: stale=0, at_risk=1, healthy/other=2
+        if "stale" in status:
+            priority = 0
+        elif "at_risk" in status:
+            priority = 1
+        else:
+            priority = 2
+
+        # Days: higher is more urgent (negate for descending), None goes last
+        days_value = -days if days is not None else float("inf")
+
+        return (priority, days_value)
+
+    return sorted(leads, key=sort_key)
+
+
+def count_leads_by_status(leads: list[dict]) -> dict[str, int]:
+    """
+    Count leads by status category.
+
+    Args:
+        leads: List of formatted lead dictionaries (from format_leads_for_display)
+
+    Returns:
+        Dictionary with counts: {"stale": N, "at_risk": N, "healthy": N}
+        Note: Leads with None or empty Status are counted as "healthy".
+        The sum of all counts always equals len(leads).
+    """
+    counts = {"stale": 0, "at_risk": 0, "healthy": 0}
+    for lead in leads:
+        status = lead.get("Status") or ""
+        if "stale" in status:
+            counts["stale"] += 1
+        elif "at_risk" in status:
+            counts["at_risk"] += 1
+        else:
+            counts["healthy"] += 1
+    return counts
+
+
 def format_last_updated(timestamp: Optional[datetime]) -> str:
     """
     Format last refresh timestamp for display.

@@ -14,6 +14,8 @@ from src.data_processing import (
     format_last_updated,
     format_phone_link,
     format_email_link,
+    sort_by_urgency,
+    count_leads_by_status,
     STALE_THRESHOLD_DAYS,
     AT_RISK_THRESHOLD_DAYS,
 )
@@ -717,3 +719,232 @@ class TestFormatLeadsForDisplayStatus:
         result = format_leads_for_display(leads)
 
         assert result[0]["Status"] is None
+
+
+class TestSortByUrgency:
+    """Tests for sort_by_urgency function (Story 2.5)."""
+
+    def test_stale_sorted_before_at_risk(self):
+        """Stale leads appear before at-risk leads."""
+        leads = [
+            {"Status": "🟡 at_risk", "Days": 5, "Lead Name": "At Risk Lead"},
+            {"Status": "🔴 stale", "Days": 10, "Lead Name": "Stale Lead"},
+        ]
+
+        result = sort_by_urgency(leads)
+
+        assert result[0]["Lead Name"] == "Stale Lead"
+        assert result[1]["Lead Name"] == "At Risk Lead"
+
+    def test_at_risk_sorted_before_healthy(self):
+        """At-risk leads appear before healthy leads."""
+        leads = [
+            {"Status": "🟢 healthy", "Days": 2, "Lead Name": "Healthy Lead"},
+            {"Status": "🟡 at_risk", "Days": 5, "Lead Name": "At Risk Lead"},
+        ]
+
+        result = sort_by_urgency(leads)
+
+        assert result[0]["Lead Name"] == "At Risk Lead"
+        assert result[1]["Lead Name"] == "Healthy Lead"
+
+    def test_stale_sorted_before_healthy(self):
+        """Stale leads appear before healthy leads."""
+        leads = [
+            {"Status": "🟢 healthy", "Days": 2, "Lead Name": "Healthy Lead"},
+            {"Status": "🔴 stale", "Days": 10, "Lead Name": "Stale Lead"},
+        ]
+
+        result = sort_by_urgency(leads)
+
+        assert result[0]["Lead Name"] == "Stale Lead"
+        assert result[1]["Lead Name"] == "Healthy Lead"
+
+    def test_within_stale_sorted_by_days_descending(self):
+        """Within stale group, older leads (more days) come first."""
+        leads = [
+            {"Status": "🔴 stale", "Days": 7, "Lead Name": "7 Days Stale"},
+            {"Status": "🔴 stale", "Days": 14, "Lead Name": "14 Days Stale"},
+            {"Status": "🔴 stale", "Days": 10, "Lead Name": "10 Days Stale"},
+        ]
+
+        result = sort_by_urgency(leads)
+
+        assert result[0]["Lead Name"] == "14 Days Stale"
+        assert result[1]["Lead Name"] == "10 Days Stale"
+        assert result[2]["Lead Name"] == "7 Days Stale"
+
+    def test_within_at_risk_sorted_by_days_descending(self):
+        """Within at-risk group, older leads (more days) come first."""
+        leads = [
+            {"Status": "🟡 at_risk", "Days": 5, "Lead Name": "5 Days"},
+            {"Status": "🟡 at_risk", "Days": 6, "Lead Name": "6 Days"},
+        ]
+
+        result = sort_by_urgency(leads)
+
+        assert result[0]["Lead Name"] == "6 Days"
+        assert result[1]["Lead Name"] == "5 Days"
+
+    def test_full_urgency_sort_order(self):
+        """Full sort: stale by days desc, then at_risk by days desc, then healthy."""
+        leads = [
+            {"Status": "🟢 healthy", "Days": 3, "Lead Name": "Healthy 3"},
+            {"Status": "🟡 at_risk", "Days": 5, "Lead Name": "At Risk 5"},
+            {"Status": "🔴 stale", "Days": 7, "Lead Name": "Stale 7"},
+            {"Status": "🟢 healthy", "Days": 1, "Lead Name": "Healthy 1"},
+            {"Status": "🔴 stale", "Days": 10, "Lead Name": "Stale 10"},
+            {"Status": "🟡 at_risk", "Days": 6, "Lead Name": "At Risk 6"},
+        ]
+
+        result = sort_by_urgency(leads)
+
+        # Stale first, by days desc
+        assert result[0]["Lead Name"] == "Stale 10"
+        assert result[1]["Lead Name"] == "Stale 7"
+        # At risk second, by days desc
+        assert result[2]["Lead Name"] == "At Risk 6"
+        assert result[3]["Lead Name"] == "At Risk 5"
+        # Healthy last, by days desc
+        assert result[4]["Lead Name"] == "Healthy 3"
+        assert result[5]["Lead Name"] == "Healthy 1"
+
+    def test_none_days_sorted_to_end(self):
+        """Leads with None days are sorted to the end."""
+        leads = [
+            {"Status": None, "Days": None, "Lead Name": "No Days"},
+            {"Status": "🔴 stale", "Days": 10, "Lead Name": "Stale Lead"},
+            {"Status": "🟢 healthy", "Days": 2, "Lead Name": "Healthy Lead"},
+        ]
+
+        result = sort_by_urgency(leads)
+
+        assert result[0]["Lead Name"] == "Stale Lead"
+        assert result[1]["Lead Name"] == "Healthy Lead"
+        assert result[2]["Lead Name"] == "No Days"
+
+    def test_empty_list_returns_empty(self):
+        """Empty input returns empty list."""
+        result = sort_by_urgency([])
+        assert result == []
+
+    def test_returns_new_list(self):
+        """sort_by_urgency returns a new list, not modifying original."""
+        leads = [
+            {"Status": "🟢 healthy", "Days": 2, "Lead Name": "Healthy"},
+            {"Status": "🔴 stale", "Days": 10, "Lead Name": "Stale"},
+        ]
+        original_order = [lead["Lead Name"] for lead in leads]
+
+        result = sort_by_urgency(leads)
+
+        # Original list unchanged
+        assert [lead["Lead Name"] for lead in leads] == original_order
+        # Result is different order
+        assert result[0]["Lead Name"] == "Stale"
+
+
+class TestCountLeadsByStatus:
+    """Tests for count_leads_by_status function (Story 2.6)."""
+
+    def test_count_with_mixed_statuses(self):
+        """Returns correct counts for mixed statuses (AC#1, AC#2)."""
+        leads = [
+            {"Status": "🔴 stale", "Days": 10},
+            {"Status": "🔴 stale", "Days": 8},
+            {"Status": "🔴 stale", "Days": 7},
+            {"Status": "🟡 at_risk", "Days": 6},
+            {"Status": "🟡 at_risk", "Days": 5},
+            {"Status": "🟢 healthy", "Days": 4},
+            {"Status": "🟢 healthy", "Days": 2},
+        ]
+
+        result = count_leads_by_status(leads)
+
+        assert result["stale"] == 3
+        assert result["at_risk"] == 2
+        assert result["healthy"] == 2
+
+    def test_count_all_stale(self):
+        """Returns correct counts when all leads are stale."""
+        leads = [
+            {"Status": "🔴 stale", "Days": 10},
+            {"Status": "🔴 stale", "Days": 7},
+        ]
+
+        result = count_leads_by_status(leads)
+
+        assert result["stale"] == 2
+        assert result["at_risk"] == 0
+        assert result["healthy"] == 0
+
+    def test_count_all_healthy(self):
+        """Returns correct counts when all leads are healthy."""
+        leads = [
+            {"Status": "🟢 healthy", "Days": 2},
+            {"Status": "🟢 healthy", "Days": 1},
+            {"Status": "🟢 healthy", "Days": 0},
+        ]
+
+        result = count_leads_by_status(leads)
+
+        assert result["stale"] == 0
+        assert result["at_risk"] == 0
+        assert result["healthy"] == 3
+
+    def test_count_empty_list_returns_zeros(self):
+        """Returns all zeros for empty list (AC#3)."""
+        result = count_leads_by_status([])
+
+        assert result["stale"] == 0
+        assert result["at_risk"] == 0
+        assert result["healthy"] == 0
+
+    def test_count_handles_none_status(self):
+        """Leads with None status are counted as healthy."""
+        leads = [
+            {"Status": None, "Days": None},
+            {"Status": "🔴 stale", "Days": 10},
+        ]
+
+        result = count_leads_by_status(leads)
+
+        assert result["stale"] == 1
+        assert result["at_risk"] == 0
+        assert result["healthy"] == 1
+
+    def test_count_returns_dict_with_all_keys(self):
+        """Result always has stale, at_risk, and healthy keys."""
+        result = count_leads_by_status([])
+
+        assert "stale" in result
+        assert "at_risk" in result
+        assert "healthy" in result
+
+    def test_count_handles_empty_string_status(self):
+        """Leads with empty string status are counted as healthy."""
+        leads = [
+            {"Status": "", "Days": 3},
+            {"Status": "🔴 stale", "Days": 10},
+        ]
+
+        result = count_leads_by_status(leads)
+
+        assert result["stale"] == 1
+        assert result["at_risk"] == 0
+        assert result["healthy"] == 1
+
+    def test_count_total_equals_input_length(self):
+        """Sum of all counts equals total number of leads."""
+        leads = [
+            {"Status": "🔴 stale", "Days": 10},
+            {"Status": "🟡 at_risk", "Days": 6},
+            {"Status": "🟢 healthy", "Days": 2},
+            {"Status": None, "Days": None},
+            {"Status": "", "Days": 3},
+        ]
+
+        result = count_leads_by_status(leads)
+
+        total = result["stale"] + result["at_risk"] + result["healthy"]
+        assert total == len(leads)
