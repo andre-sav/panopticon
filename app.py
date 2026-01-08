@@ -4,6 +4,7 @@ Main Streamlit application entry point.
 """
 from datetime import datetime, timezone
 
+import pandas as pd
 import streamlit as st
 
 from src.zoho_client import (
@@ -143,6 +144,22 @@ def display_dashboard():
         # Format leads for display
         display_data = format_leads_for_display(leads)
 
+        # Convert to DataFrame for styling (Story 2.4)
+        df = pd.DataFrame(display_data)
+
+        # Style function for row background colors based on status
+        def style_status_rows(row):
+            """Apply background color based on Status column."""
+            status = row.get("Status", "")
+            if status and "stale" in status:
+                return ["background-color: #ffcccc"] * len(row)  # Light red
+            elif status and "at_risk" in status:
+                return ["background-color: #fff3cd"] * len(row)  # Light amber
+            return [""] * len(row)  # No color for healthy
+
+        # Apply row styling
+        styled_df = df.style.apply(style_status_rows, axis=1)
+
         # Configure columns with clickable contact links (Story 1.7)
         column_config = {
             "Phone": st.column_config.LinkColumn(
@@ -157,9 +174,9 @@ def display_dashboard():
             ),
         }
 
-        # Display as dataframe with contact action columns
+        # Display as dataframe with styling and contact action columns
         st.dataframe(
-            display_data,
+            styled_df,
             use_container_width=True,
             hide_index=True,
             column_config=column_config,

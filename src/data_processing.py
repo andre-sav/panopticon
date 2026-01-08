@@ -7,9 +7,12 @@ Responsibilities:
 - Filtering and sorting logic
 - Display formatting
 """
+import logging
 import platform
 from datetime import datetime, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # Staleness thresholds (single source of truth)
 STALE_THRESHOLD_DAYS = 7
@@ -29,6 +32,30 @@ def get_lead_status(days_since: int) -> str:
     elif days_since >= AT_RISK_THRESHOLD_DAYS:
         return "at_risk"
     return "healthy"
+
+
+def format_status_display(status: Optional[str]) -> Optional[str]:
+    """
+    Format status with emoji prefix for visual indicator.
+
+    Args:
+        status: Status string ('stale', 'at_risk', 'healthy') or None
+
+    Returns:
+        Formatted status with emoji (e.g., '🔴 stale') or None
+    """
+    if status is None:
+        return None
+    emoji_map = {
+        "stale": "🔴",
+        "at_risk": "🟡",
+        "healthy": "🟢",
+    }
+    emoji = emoji_map.get(status)
+    if emoji is None:
+        logger.warning("Unknown status value: %s", status)
+        return status
+    return f"{emoji} {status}"
 
 
 # Display formatting functions
@@ -107,22 +134,28 @@ def format_leads_for_display(leads: list[dict]) -> list[dict]:
         List of dictionaries formatted for display with columns:
         - Lead Name
         - Appointment Date
+        - Days (days since appointment)
+        - Status: stale (7+ days), at_risk (5-6 days), healthy (<5 days)
         - Stage
         - Locator
         - Phone (tel: link or None)
         - Email (mailto: link or None)
     """
-    return [
-        {
+    result = []
+    for lead in leads:
+        days = calculate_days_since(lead["appointment_date"]) if lead.get("appointment_date") else None
+        status = get_lead_status(days) if days is not None else None
+        result.append({
             "Lead Name": safe_display(lead.get("name")),
             "Appointment Date": format_date(lead.get("appointment_date")),
+            "Days": days,
+            "Status": format_status_display(status),
             "Stage": safe_display(lead.get("current_stage")),
             "Locator": safe_display(lead.get("locator_name")),
             "Phone": format_phone_link(lead.get("locator_phone")),
             "Email": format_email_link(lead.get("locator_email")),
-        }
-        for lead in leads
-    ]
+        })
+    return result
 
 
 def format_last_updated(timestamp: Optional[datetime]) -> str:

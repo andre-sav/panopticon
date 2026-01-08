@@ -50,11 +50,11 @@ development_status:
   epic-1-retrospective: optional
 
   # Epic 2: Stale Lead Detection
-  epic-2: backlog
-  2-1-days-since-appointment-calculation: backlog
-  2-2-stale-lead-detection-logic: backlog
-  2-3-at-risk-lead-detection: backlog
-  2-4-visual-status-indicators: backlog
+  epic-2: in-progress
+  2-1-days-since-appointment-calculation: done
+  2-2-stale-lead-detection-logic: done
+  2-3-at-risk-lead-detection: done
+  2-4-visual-status-indicators: done
   2-5-problems-first-sorting: backlog
   2-6-summary-metrics-cards: backlog
   epic-2-retrospective: optional

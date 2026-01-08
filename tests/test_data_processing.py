@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 from src.data_processing import (
     calculate_days_since,
     get_lead_status,
+    format_status_display,
     format_date,
     safe_display,
     format_leads_for_display,
@@ -227,8 +228,8 @@ class TestFormatLeadsForDisplay:
         assert "id" not in result[0]
         assert "locator_phone" not in result[0]
         assert "locator_email" not in result[0]
-        # Should have display columns including contact links (Story 1.7)
-        assert set(result[0].keys()) == {"Lead Name", "Appointment Date", "Stage", "Locator", "Phone", "Email"}
+        # Should have display columns including Days, Status (Story 2.1, 2.2) and contact links (Story 1.7)
+        assert set(result[0].keys()) == {"Lead Name", "Appointment Date", "Days", "Status", "Stage", "Locator", "Phone", "Email"}
 
 
 class TestFormatLastUpdated:
@@ -438,3 +439,281 @@ class TestFormatLeadsForDisplayContacts:
 
         assert result[0]["Phone"] == "tel:(555) 123-4567"
         assert result[0]["Email"] == "mailto:marcus@example.com"
+
+
+class TestFormatLeadsForDisplayDays:
+    """Tests for Days column in format_leads_for_display (Story 2.1)."""
+
+    def test_days_positive_for_past_appointment(self):
+        """Days column shows positive value for past appointment (AC#1)."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc) - timedelta(days=5),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Days"] == 5
+
+    def test_days_seven_for_week_old_appointment(self):
+        """Days column shows 7 for appointment exactly 7 days ago (AC#2)."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc) - timedelta(days=7),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Days"] == 7
+
+    def test_days_zero_for_today_appointment(self):
+        """Days column shows 0 for today's appointment (AC#2)."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Days"] == 0
+
+    def test_days_negative_for_future_appointment(self):
+        """Days column shows negative value for future appointment (AC#3)."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc) + timedelta(days=2),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Days"] == -2
+
+    def test_days_column_exists_in_output(self):
+        """Days column is present in formatted output (AC#1)."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc) - timedelta(days=3),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert "Days" in result[0]
+
+    def test_days_none_for_missing_appointment_date(self):
+        """Days column is None when appointment_date is missing."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": None,
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Days"] is None
+
+
+class TestFormatStatusDisplay:
+    """Tests for format_status_display function (Story 2.4)."""
+
+    def test_stale_has_red_emoji(self):
+        """Stale status shows red circle emoji."""
+        result = format_status_display("stale")
+        assert result == "🔴 stale"
+
+    def test_at_risk_has_yellow_emoji(self):
+        """At-risk status shows yellow circle emoji."""
+        result = format_status_display("at_risk")
+        assert result == "🟡 at_risk"
+
+    def test_healthy_has_green_emoji(self):
+        """Healthy status shows green circle emoji."""
+        result = format_status_display("healthy")
+        assert result == "🟢 healthy"
+
+    def test_none_returns_none(self):
+        """None input returns None."""
+        result = format_status_display(None)
+        assert result is None
+
+    def test_unknown_status_returns_plain_text_and_logs_warning(self, caplog):
+        """Unknown status returns plain text and logs warning."""
+        import logging
+        with caplog.at_level(logging.WARNING):
+            result = format_status_display("unknown_status")
+        assert result == "unknown_status"
+        assert "Unknown status value: unknown_status" in caplog.text
+
+
+class TestFormatLeadsForDisplayStatus:
+    """Tests for Status column in format_leads_for_display (Story 2.2, 2.4)."""
+
+    def test_status_stale_for_seven_plus_days(self):
+        """Status column shows '🔴 stale' for 7+ days (AC#1)."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc) - timedelta(days=7),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Status"] == "🔴 stale"
+
+    def test_status_stale_for_ten_days(self):
+        """Status column shows '🔴 stale' for 10 days."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc) - timedelta(days=10),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Status"] == "🔴 stale"
+
+    def test_status_not_stale_for_six_days(self):
+        """Status column is NOT 'stale' for 6 days (AC#2)."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc) - timedelta(days=6),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Status"] == "🟡 at_risk"  # 6 days is at_risk, not stale
+
+    def test_status_at_risk_for_five_days(self):
+        """Status column shows '🟡 at_risk' for 5 days."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc) - timedelta(days=5),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Status"] == "🟡 at_risk"
+
+    def test_status_healthy_for_four_days(self):
+        """Status column shows '🟢 healthy' for < 5 days."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc) - timedelta(days=4),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Status"] == "🟢 healthy"
+
+    def test_status_healthy_for_zero_days(self):
+        """Status column shows '🟢 healthy' for today's appointment (0 days)."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Status"] == "🟢 healthy"
+
+    def test_status_healthy_for_future_appointment(self):
+        """Status column shows '🟢 healthy' for future appointment (negative days)."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": datetime.now(timezone.utc) + timedelta(days=3),
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Status"] == "🟢 healthy"
+
+    def test_status_none_for_missing_appointment_date(self):
+        """Status column is None when appointment_date is missing."""
+        leads = [
+            {
+                "name": "John",
+                "appointment_date": None,
+                "current_stage": "Appt Set",
+                "locator_name": "Marcus",
+                "locator_phone": None,
+                "locator_email": None,
+            }
+        ]
+
+        result = format_leads_for_display(leads)
+
+        assert result[0]["Status"] is None
