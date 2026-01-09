@@ -10,6 +10,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from streamlit_scroll_to_top import scroll_to_here
 
 # Configure logging
 logging.basicConfig(
@@ -65,25 +66,6 @@ st.set_page_config(
 # Custom CSS for visual hierarchy, contrast, and polish
 st.markdown("""
 <style>
-    /* Back to top button */
-    .back-to-top-fixed {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        background: #1a73e8;
-        color: white !important;
-        padding: 10px 15px;
-        border-radius: 8px;
-        text-decoration: none;
-        font-size: 14px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        z-index: 10000;
-        cursor: pointer;
-    }
-    .back-to-top-fixed:hover {
-        background: #1557b0;
-        color: white !important;
-    }
     /* Reduce top padding */
     .block-container {
         padding-top: 2rem;
@@ -171,35 +153,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Top anchor for back-to-top navigation
-st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
-
-# Scroll to top if flag is set
-if st.session_state.get("scroll_to_top", False):
-    st.session_state["scroll_to_top"] = False
-    import streamlit.components.v1 as components
-    components.html("""
-        <script>
-            // Use multiple methods to try to scroll to top
-            setTimeout(function() {
-                // Method 1: Find and scroll the anchor into view
-                var anchor = window.parent.document.getElementById('top-anchor');
-                if (anchor) anchor.scrollIntoView(true);
-
-                // Method 2: Direct scroll attempts
-                var container = window.parent.document.querySelector('[data-testid="stAppViewContainer"]');
-                if (container) container.scrollTop = 0;
-
-                // Method 3: Scroll the section container
-                var section = window.parent.document.querySelector('section.main');
-                if (section) section.scrollTop = 0;
-            }, 150);
-        </script>
-    """, height=0)
-
 # Header - more compact
 st.markdown("# 👁️ Panopticon")
 st.caption("Lead Follow-up Management Dashboard")
+
+# Scroll-to-top target and trigger
+if st.session_state.get("scroll_to_top", False):
+    scroll_to_here(0, key="scroll_top")
+    st.session_state.scroll_to_top = False
 
 
 def fetch_and_cache_leads(bypass_cache: bool = False):
@@ -454,7 +415,6 @@ def display_metrics_cards(display_data: list[dict]):
                             text-align: center; box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);">
                     <div style="font-size: 3.5rem; font-weight: 700; line-height: 1;">{stale_count}</div>
                     <div style="font-size: 1rem; opacity: 0.9; margin-top: 0.5rem;">Stale Leads</div>
-                    <div style="font-size: 0.85rem; margin-top: 0.25rem;">7+ days without progress</div>
                 </div>
             """, unsafe_allow_html=True)
 
@@ -533,9 +493,9 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
     """Display 'At Risk' leads priority list with in-place expansion.
 
     Shows top items by default with toggle button to show all.
-    Lead names are hyperlinks to Zoho CRM.
+    Lead names are hyperlinks to cards, Zoho column links to CRM.
     """
-    from src.zoho_client import get_notes_for_leads
+    from src.data_processing import format_zoho_link
 
     # Filter to at_risk leads only
     at_risk_leads = [
@@ -545,10 +505,6 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
 
     if not at_risk_leads:
         return
-
-    # Fetch notes for these leads
-    lead_ids = [lead.get("id") for lead in at_risk_leads if lead.get("id")]
-    notes_map = get_notes_for_leads(lead_ids) if lead_ids else {}
 
     # Build table data
     table_data = []
@@ -566,17 +522,17 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
             appt_date_formatted = "—"
 
         lead_id = lead.get("id", "")
-        note = notes_map.get(lead_id, "")
         days = lead.get("Days")
-        days_display = f"in {abs(days)}d" if days is not None and days < 0 else (f"{days}d" if days is not None else "—")
+        # For at-risk (future appointments), show just the number (days until)
+        days_display = str(abs(days)) if days is not None else "—"
 
         table_data.append({
             "id": lead_id,
             "Lead": lead.get("Lead Name", "Unknown"),
             "Appt Date": appt_date_formatted,
-            "Days": days_display,
+            "Days Until": days_display,
             "Locator": lead.get("Locator", "—"),
-            "Note": note,
+            "zoho_url": format_zoho_link(lead_id) if lead_id else "",
         })
 
     total_count = len(table_data)
@@ -604,14 +560,13 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
         lead_name = _escape_html(row["Lead"])
         lead_cell = f'<a href="#lead-{lead_id}" style="color: #1a73e8; text-decoration: none;">{lead_name}</a>'
         appt_date = _escape_html(row["Appt Date"])
-        days = _escape_html(row["Days"])
+        days = _escape_html(row["Days Until"])
         locator = _escape_html(row["Locator"])
-        note_full = _escape_html(row["Note"])
-        note_truncated = _escape_html(_truncate_note(row["Note"]))
-        note_cell = f'<span title="{note_full}">{note_truncated}</span>' if row["Note"] else "—"
-        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{days}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px;">{note_cell}</td></tr>')
+        zoho_url = row.get("zoho_url", "")
+        zoho_cell = f'<a href="{zoho_url}" target="_blank" style="color: #1a73e8; text-decoration: none;">{lead_id}</a>' if zoho_url else "—"
+        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{days}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{zoho_cell}</td></tr>')
 
-    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Days</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Note</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
+    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Days Until</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Zoho</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
     st.markdown(html_table, unsafe_allow_html=True)
 
     # Show expand/collapse button if needed
@@ -634,6 +589,7 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
     Lead names are hyperlinks to Zoho CRM.
     """
     from src.zoho_client import get_notes_for_leads
+    from src.data_processing import format_zoho_link
 
     # Filter to needs_attention leads only
     needs_attention_leads = [
@@ -676,15 +632,17 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
         lead_id = lead.get("id", "")
         note = notes_map.get(lead_id, "")
         days = lead.get("Days")
-        days_display = f"in {abs(days)}d" if days is not None and days < 0 else (f"{days}d" if days is not None else "—")
+        # For needs-attention (past appointments), show just the number (days since)
+        days_display = str(abs(days)) if days is not None else "—"
 
         table_data.append({
             "id": lead_id,
             "Lead": lead.get("Lead Name", "Unknown"),
             "Appt Date": appt_date_formatted,
-            "Days": days_display,
+            "Days Since": days_display,
             "Locator": lead.get("Locator", "—"),
             "Note": note,
+            "zoho_url": format_zoho_link(lead_id) if lead_id else "",
         })
 
     # Initialize expansion state
@@ -701,14 +659,16 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
         lead_name = _escape_html(row["Lead"])
         lead_cell = f'<a href="#lead-{lead_id}" style="color: #1a73e8; text-decoration: none;">{lead_name}</a>'
         appt_date = _escape_html(row["Appt Date"])
-        days = _escape_html(row["Days"])
+        days = _escape_html(row["Days Since"])
         locator = _escape_html(row["Locator"])
         note_full = _escape_html(row["Note"])
         note_truncated = _escape_html(_truncate_note(row["Note"]))
         note_cell = f'<span title="{note_full}">{note_truncated}</span>' if row["Note"] else "—"
-        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{days}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px;">{note_cell}</td></tr>')
+        zoho_url = row["zoho_url"]
+        zoho_cell = f'<a href="{zoho_url}" target="_blank" style="color: #1a73e8; text-decoration: none;">Open</a>' if zoho_url else "—"
+        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{days}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px;">{note_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{zoho_cell}</td></tr>')
 
-    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Days</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Note</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
+    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Days Since</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Note</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Zoho</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
     st.markdown(html_table, unsafe_allow_html=True)
 
     # Show expand/collapse button if needed
@@ -1088,11 +1048,13 @@ def display_lead_detail(lead: dict):
     st.divider()
     display_stage_history(lead)
 
-    # Back to top button
+    # Back to top button (also collapses all cards)
     col1, col2, col3 = st.columns([2, 1, 1])
     with col3:
         if st.button("↑ Back to top", key=f"back_top_{lead.get('id', '')}", use_container_width=True):
-            st.session_state["scroll_to_top"] = True
+            st.session_state.scroll_to_top = True
+            # Increment collapse version to force all expanders to reset
+            st.session_state.expander_version = st.session_state.get("expander_version", 0) + 1
             st.rerun()
 
 
@@ -1119,24 +1081,8 @@ def display_stage_history(lead: dict):
     # Session state keys
     cache_key = f"stage_history_{lead_id}"
     error_key = f"stage_history_error_{lead_id}"
-    refresh_key = f"refresh_history_{lead_id}"
 
-    # Handle refresh button click
-    if st.session_state.get(refresh_key, False):
-        # Clear both session state and Supabase cache
-        st.session_state.pop(cache_key, None)
-        st.session_state.pop(error_key, None)
-        st.session_state[refresh_key] = False
-        clear_cache(lead_id)
-
-    # Header row with title and refresh button
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.markdown("### Stage History")
-    with col2:
-        if st.button("🔄 Refresh", key=f"btn_refresh_{lead_id}", use_container_width=True):
-            st.session_state[refresh_key] = True
-            st.rerun()
+    st.markdown("### Stage History")
 
     # Fetch stage history (cached per lead in session state)
     if cache_key not in st.session_state:
@@ -1291,7 +1237,9 @@ def display_lead_cards(leads: list[dict]):
         # Add anchor for scrolling with data attribute for lead name
         st.markdown(f'<div id="lead-{lead_id}" data-leadname="{lead_name}"></div>', unsafe_allow_html=True)
 
-        with st.expander(expander_label):
+        # Use versioned key so "Back to top" can collapse all cards
+        expander_version = st.session_state.get("expander_version", 0)
+        with st.expander(expander_label, key=f"card_{lead_id}_v{expander_version}"):
             display_lead_detail(lead)
 
 
@@ -1483,25 +1431,6 @@ components.html("""
 
     // Attach listener to parent document
     doc.addEventListener('click', handleClick, true);
-
-    // Add back-to-top button (remove old one first if exists)
-    const existingBtn = doc.getElementById('customBackToTop');
-    if (existingBtn) existingBtn.remove();
-
-    const btn = doc.createElement('button');
-    btn.id = 'customBackToTop';
-    btn.innerHTML = '↑ Top';
-    btn.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#1a73e8;color:white;padding:10px 15px;border-radius:8px;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:10000;cursor:pointer;border:none;display:none;';
-    btn.onclick = () => {
-        window.parent.scrollTo({top: 0, behavior: 'smooth'});
-    };
-    doc.body.appendChild(btn);
-
-    // Show/hide on scroll - check periodically since scroll events can be tricky
-    setInterval(() => {
-        const scrollTop = window.parent.scrollY || doc.documentElement.scrollTop || 0;
-        btn.style.display = scrollTop > 300 ? 'block' : 'none';
-    }, 200);
 })();
 </script>
 """, height=0)

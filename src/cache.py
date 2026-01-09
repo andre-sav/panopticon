@@ -445,6 +445,9 @@ def get_cached_notes(lead_ids: list[str]) -> dict[str, str]:
     """
     Get cached notes for multiple leads.
 
+    Uses session state to cache Supabase responses within a render cycle,
+    preventing duplicate network calls on Streamlit reruns.
+
     Args:
         lead_ids: List of Zoho lead IDs
 
@@ -452,34 +455,68 @@ def get_cached_notes(lead_ids: list[str]) -> dict[str, str]:
         Dict mapping lead_id to last_note text.
         Leads with NO_NOTES_MARKER are returned as empty string.
     """
-    client = _get_supabase_client()
-    if not client or not lead_ids:
+    import streamlit as st
+
+    if not lead_ids:
         return {}
+
+    # Check session state cache first (per-render deduplication)
+    cache_key = "notes_cache_session"
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = {}
+
+    session_cache = st.session_state[cache_key]
+
+    # Find which lead_ids we already have in session cache
+    result = {}
+    missing_ids = []
+    for lead_id in lead_ids:
+        if lead_id in session_cache:
+            result[lead_id] = session_cache[lead_id]
+        else:
+            missing_ids.append(lead_id)
+
+    # If all requested IDs are cached, return early
+    if not missing_ids:
+        return result
+
+    # Fetch missing IDs from Supabase
+    client = _get_supabase_client()
+    if not client:
+        return result
 
     try:
         response = (
             client.table("notes_cache")
             .select("lead_id, last_note")
-            .in_("lead_id", lead_ids)
+            .in_("lead_id", missing_ids)
             .execute()
         )
 
-        if not response.data:
-            return {}
+        # Process response and update both result and session cache
+        fetched_ids = set()
+        if response.data:
+            for record in response.data:
+                lead_id = record["lead_id"]
+                note = record.get("last_note", "")
+                fetched_ids.add(lead_id)
+                if note == NO_NOTES_MARKER:
+                    result[lead_id] = ""
+                    session_cache[lead_id] = ""
+                elif note:
+                    result[lead_id] = note
+                    session_cache[lead_id] = note
 
-        # Return all cached notes, converting NO_NOTES_MARKER to empty string
-        result = {}
-        for record in response.data:
-            note = record.get("last_note", "")
-            if note == NO_NOTES_MARKER:
-                result[record["lead_id"]] = ""
-            elif note:
-                result[record["lead_id"]] = note
+        # Mark IDs not found in Supabase as empty (prevents re-fetching)
+        for lead_id in missing_ids:
+            if lead_id not in fetched_ids:
+                session_cache[lead_id] = ""
+
         return result
 
     except Exception as e:
         logger.error("Error reading notes from cache: %s", e)
-        return {}
+        return result
 
 
 def set_cached_notes(notes: dict[str, str]) -> bool:
@@ -520,9 +557,16 @@ def clear_notes_cache() -> bool:
     """
     Clear all cached notes (used by Refresh button).
 
+    Clears both session state cache and Supabase cache.
+
     Returns:
         True if cleared successfully, False otherwise
     """
+    import streamlit as st
+
+    # Clear session state cache
+    st.session_state.pop("notes_cache_session", None)
+
     client = _get_supabase_client()
     if not client:
         return False

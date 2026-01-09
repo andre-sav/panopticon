@@ -756,6 +756,23 @@ def get_stage_history(lead_id: str, current_stage: str = None) -> list[dict] | N
 
         logger.info("Found %d stage transitions for lead %s", len(stage_transitions), lead_id)
 
+        # If current stage doesn't match last transition's to_stage,
+        # add a synthetic entry to prevent cache invalidation loops
+        # (Zoho timeline API sometimes misses transitions)
+        if current_stage and stage_transitions:
+            last_to_stage = stage_transitions[-1].get("to_stage")
+            if last_to_stage and last_to_stage != current_stage:
+                logger.info(
+                    "Adding synthetic transition for lead %s: '%s' -> '%s' (timeline gap)",
+                    lead_id, last_to_stage, current_stage
+                )
+                synthetic_entry = {
+                    "from_stage": last_to_stage,
+                    "to_stage": current_stage,
+                    "changed_at": datetime.now(timezone.utc),
+                }
+                stage_transitions.append(synthetic_entry)
+
         # Cache the result (convert datetimes to ISO strings for JSON storage)
         cache_data = []
         for t in stage_transitions:
