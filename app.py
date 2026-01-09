@@ -1034,14 +1034,13 @@ def display_lead_detail(lead: dict):
         if not phone and not email:
             st.write("No contact info available")
 
-    # Notes section
+    # Notes section - use prefetched notes from session state
     st.divider()
     st.markdown("**Latest Note**")
     lead_id = lead.get("id")
     if lead_id:
-        from src.zoho_client import get_notes_for_leads
-        notes_map = get_notes_for_leads([lead_id])
-        note = notes_map.get(lead_id, "")
+        cache_key = f"notes_{lead_id}"
+        note = st.session_state.get(cache_key, "")
         if note:
             st.write(note)
         else:
@@ -1213,6 +1212,36 @@ def _prefetch_stage_histories(leads: list[dict]):
         st.session_state[f"stage_history_error_{lead_id}"] = False
 
 
+def _prefetch_notes(leads: list[dict]):
+    """Prefetch notes for all leads in a single batch operation.
+
+    Stores results in session state for use by display_lead_detail.
+    This avoids N+1 queries when rendering lead cards.
+    """
+    from src.zoho_client import get_notes_for_leads
+
+    # Get lead IDs that don't already have notes in session state
+    lead_ids_to_fetch = []
+    for lead in leads:
+        lead_id = lead.get("id")
+        if not lead_id:
+            continue
+        cache_key = f"notes_{lead_id}"
+        if cache_key not in st.session_state:
+            lead_ids_to_fetch.append(lead_id)
+
+    if not lead_ids_to_fetch:
+        return
+
+    # Single batch fetch for all leads
+    notes_map = get_notes_for_leads(lead_ids_to_fetch)
+
+    # Store in session state
+    for lead_id in lead_ids_to_fetch:
+        cache_key = f"notes_{lead_id}"
+        st.session_state[cache_key] = notes_map.get(lead_id, "")
+
+
 def display_lead_cards(leads: list[dict]):
     """Display leads as expandable cards with detail views (Story 4.1).
 
@@ -1221,8 +1250,9 @@ def display_lead_cards(leads: list[dict]):
     Args:
         leads: List of formatted lead dictionaries
     """
-    # Prefetch stage histories in a single batch query
+    # Prefetch stage histories and notes in batch
     _prefetch_stage_histories(leads)
+    _prefetch_notes(leads)
 
 
     for lead in leads:

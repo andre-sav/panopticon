@@ -808,18 +808,19 @@ def get_notes_for_leads(lead_ids: list[str]) -> dict[str, str]:
         Dict mapping lead_id to the most recent note text.
         Leads without notes will have empty string value.
     """
-    from src.cache import get_cached_notes, set_cached_notes, get_uncached_lead_ids, NO_NOTES_MARKER
+    from src.cache import get_cached_notes, set_cached_notes, NO_NOTES_MARKER
 
     _init_session_state()
 
     if not lead_ids:
         return {}
 
-    # Get cached notes first
+    # Get cached notes first (single query)
     cached_notes = get_cached_notes(lead_ids)
 
-    # Find which leads need fresh API data
-    uncached_ids = get_uncached_lead_ids(lead_ids)
+    # Compute uncached IDs from the result (no extra query needed)
+    # Notes with empty string are considered "checked but no notes"
+    uncached_ids = [lid for lid in lead_ids if lid not in cached_notes]
 
     if not uncached_ids:
         logger.debug("All %d notes served from cache", len(lead_ids))
@@ -827,14 +828,28 @@ def get_notes_for_leads(lead_ids: list[str]) -> dict[str, str]:
 
     logger.info("Fetching notes for %d uncached leads", len(uncached_ids))
 
-    # Fetch notes from API for uncached leads
+    # Fetch notes from API for uncached leads - use concurrent requests for speed
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     fresh_notes = {}
     notes_to_cache = {}
-    for lead_id in uncached_ids:
-        note = _fetch_latest_note_for_lead(lead_id)
-        fresh_notes[lead_id] = note if note else ""
-        # Cache ALL results - use NO_NOTES_MARKER for leads without notes
-        notes_to_cache[lead_id] = note if note else NO_NOTES_MARKER
+
+    # Use thread pool for concurrent API calls (max 10 concurrent to avoid rate limits)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_lead = {
+            executor.submit(_fetch_latest_note_for_lead, lead_id): lead_id
+            for lead_id in uncached_ids
+        }
+        for future in as_completed(future_to_lead):
+            lead_id = future_to_lead[future]
+            try:
+                note = future.result()
+                fresh_notes[lead_id] = note if note else ""
+                notes_to_cache[lead_id] = note if note else NO_NOTES_MARKER
+            except Exception as e:
+                logger.error("Error fetching note for lead %s: %s", lead_id, e)
+                fresh_notes[lead_id] = ""
+                notes_to_cache[lead_id] = NO_NOTES_MARKER
 
     # Cache all results (including "no notes" markers)
     if notes_to_cache:
