@@ -1053,8 +1053,8 @@ def display_lead_detail(lead: dict):
     with col3:
         if st.button("↑ Back to top", key=f"back_top_{lead.get('id', '')}", use_container_width=True):
             st.session_state.scroll_to_top = True
-            # Increment collapse version to force all expanders to reset
-            st.session_state.expander_version = st.session_state.get("expander_version", 0) + 1
+            # Set flag to collapse all cards on next render
+            st.session_state.collapse_all_cards = True
             st.rerun()
 
 
@@ -1237,10 +1237,14 @@ def display_lead_cards(leads: list[dict]):
         # Add anchor for scrolling with data attribute for lead name
         st.markdown(f'<div id="lead-{lead_id}" data-leadname="{lead_name}"></div>', unsafe_allow_html=True)
 
-        # Use versioned key so "Back to top" can collapse all cards
-        expander_version = st.session_state.get("expander_version", 0)
-        with st.expander(expander_label, key=f"card_{lead_id}_v{expander_version}"):
+        # Collapse all cards when "Back to top" is pressed
+        should_collapse = st.session_state.get("collapse_all_cards", False)
+        with st.expander(expander_label, expanded=not should_collapse):
             display_lead_detail(lead)
+
+    # Clear collapse flag after all cards are rendered
+    if st.session_state.get("collapse_all_cards", False):
+        st.session_state.collapse_all_cards = False
 
 
 def _capture_daily_snapshot(display_data: list[dict]):
