@@ -65,6 +65,25 @@ st.set_page_config(
 # Custom CSS for visual hierarchy, contrast, and polish
 st.markdown("""
 <style>
+    /* Back to top button */
+    .back-to-top-fixed {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #1a73e8;
+        color: white !important;
+        padding: 10px 15px;
+        border-radius: 8px;
+        text-decoration: none;
+        font-size: 14px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        z-index: 10000;
+        cursor: pointer;
+    }
+    .back-to-top-fixed:hover {
+        background: #1557b0;
+        color: white !important;
+    }
     /* Reduce top padding */
     .block-container {
         padding-top: 2rem;
@@ -108,10 +127,8 @@ st.markdown("""
         overflow-y: auto;
     }
 
-    /* Lead card status borders */
+    /* Lead card spacing */
     div[data-testid="stExpander"] {
-        border-left: 4px solid #e9ecef;
-        border-radius: 4px;
         margin-bottom: 0.5rem;
     }
 
@@ -153,6 +170,32 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+# Top anchor for back-to-top navigation
+st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
+
+# Scroll to top if flag is set
+if st.session_state.get("scroll_to_top", False):
+    st.session_state["scroll_to_top"] = False
+    import streamlit.components.v1 as components
+    components.html("""
+        <script>
+            // Use multiple methods to try to scroll to top
+            setTimeout(function() {
+                // Method 1: Find and scroll the anchor into view
+                var anchor = window.parent.document.getElementById('top-anchor');
+                if (anchor) anchor.scrollIntoView(true);
+
+                // Method 2: Direct scroll attempts
+                var container = window.parent.document.querySelector('[data-testid="stAppViewContainer"]');
+                if (container) container.scrollTop = 0;
+
+                // Method 3: Scroll the section container
+                var section = window.parent.document.querySelector('section.main');
+                if (section) section.scrollTop = 0;
+            }, 150);
+        </script>
+    """, height=0)
 
 # Header - more compact
 st.markdown("# 👁️ Panopticon")
@@ -213,10 +256,21 @@ def display_header():
     with col2:
         is_refreshing = st.session_state.get("refreshing", False)
         if st.button("🔄 Refresh", disabled=is_refreshing, use_container_width=True):
+            from src.cache import clear_notes_cache
+
             # Clear session state and set flag to bypass Supabase cache
             st.session_state.pop("leads", None)
             st.session_state.refreshing = True
             st.session_state.bypass_cache = True
+
+            # Clear notes cache so fresh notes are fetched
+            clear_notes_cache()
+
+            # Clear stage history from session state (will be re-fetched)
+            keys_to_clear = [k for k in st.session_state.keys() if k.startswith("stage_history_")]
+            for key in keys_to_clear:
+                st.session_state.pop(key, None)
+
             st.rerun()
 
 
@@ -513,14 +567,16 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
 
         lead_id = lead.get("id", "")
         note = notes_map.get(lead_id, "")
+        days = lead.get("Days")
+        days_display = f"in {abs(days)}d" if days is not None and days < 0 else (f"{days}d" if days is not None else "—")
 
         table_data.append({
             "id": lead_id,
             "Lead": lead.get("Lead Name", "Unknown"),
             "Appt Date": appt_date_formatted,
+            "Days": days_display,
             "Locator": lead.get("Locator", "—"),
             "Note": note,
-            "zoho_link": lead.get("zoho_link", ""),
         })
 
     total_count = len(table_data)
@@ -530,7 +586,7 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
         <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 0.75rem 1rem;
                     border-radius: 0 4px 4px 0; margin-bottom: 0.5rem;">
             <strong>⚠️ {total_count} lead{'s' if total_count != 1 else ''} at risk</strong>
-            <span style="color: #856404;"> (Awaiting acknowledgment)</span>
+            <span style="color: #856404;"> (Appointment unacknowledged by Locator)</span>
         </div>
     """, unsafe_allow_html=True)
 
@@ -544,17 +600,18 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
     # Render as HTML table with clickable lead names
     html_rows = []
     for row in visible_data:
+        lead_id = _escape_html(row["id"])
         lead_name = _escape_html(row["Lead"])
-        zoho_link = _escape_html(row["zoho_link"])
-        lead_cell = f'<a href="{zoho_link}" target="_blank" style="color: #1a73e8; text-decoration: none;">{lead_name}</a>' if zoho_link else lead_name
+        lead_cell = f'<a href="#lead-{lead_id}" style="color: #1a73e8; text-decoration: none;">{lead_name}</a>'
         appt_date = _escape_html(row["Appt Date"])
+        days = _escape_html(row["Days"])
         locator = _escape_html(row["Locator"])
         note_full = _escape_html(row["Note"])
         note_truncated = _escape_html(_truncate_note(row["Note"]))
         note_cell = f'<span title="{note_full}">{note_truncated}</span>' if row["Note"] else "—"
-        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px;">{note_cell}</td></tr>')
+        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{days}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px;">{note_cell}</td></tr>')
 
-    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Note</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
+    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Days</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Note</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
     st.markdown(html_table, unsafe_allow_html=True)
 
     # Show expand/collapse button if needed
@@ -597,15 +654,13 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
     st.markdown(f"""
         <div style="background: #fff3cd; border-left: 4px solid #fd7e14; padding: 0.75rem 1rem; margin-bottom: 0.5rem; border-radius: 0 4px 4px 0;">
             <strong style="color: #856404;">🟠 {total_count} lead{'s' if total_count != 1 else ''} need{'s' if total_count == 1 else ''} attention</strong>
-            <span style="color: #856404;"> (No update in 7+ days)</span>
+            <span style="color: #856404;"> (have not progressed from Green - Approved by Locator in 7+ days)</span>
         </div>
     """, unsafe_allow_html=True)
 
     # Create table data
     table_data = []
     for lead in needs_attention_leads:
-        stage = lead.get("Stage", "—")
-
         # Format appointment date as MM.DD.YYYY
         appt_date = lead.get("Appointment Date", "—")
         if appt_date and appt_date != "—":
@@ -620,15 +675,16 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
 
         lead_id = lead.get("id", "")
         note = notes_map.get(lead_id, "")
+        days = lead.get("Days")
+        days_display = f"in {abs(days)}d" if days is not None and days < 0 else (f"{days}d" if days is not None else "—")
 
         table_data.append({
             "id": lead_id,
             "Lead": lead.get("Lead Name", "Unknown"),
             "Appt Date": appt_date_formatted,
-            "Stage": stage,
+            "Days": days_display,
             "Locator": lead.get("Locator", "—"),
             "Note": note,
-            "zoho_link": lead.get("zoho_link", ""),
         })
 
     # Initialize expansion state
@@ -641,18 +697,18 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
     # Render as HTML table with clickable lead names
     html_rows = []
     for row in visible_data:
+        lead_id = _escape_html(row["id"])
         lead_name = _escape_html(row["Lead"])
-        zoho_link = _escape_html(row["zoho_link"])
-        lead_cell = f'<a href="{zoho_link}" target="_blank" style="color: #1a73e8; text-decoration: none;">{lead_name}</a>' if zoho_link else lead_name
+        lead_cell = f'<a href="#lead-{lead_id}" style="color: #1a73e8; text-decoration: none;">{lead_name}</a>'
         appt_date = _escape_html(row["Appt Date"])
-        stage = _escape_html(row["Stage"])
+        days = _escape_html(row["Days"])
         locator = _escape_html(row["Locator"])
         note_full = _escape_html(row["Note"])
         note_truncated = _escape_html(_truncate_note(row["Note"]))
         note_cell = f'<span title="{note_full}">{note_truncated}</span>' if row["Note"] else "—"
-        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{stage}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px;">{note_cell}</td></tr>')
+        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{days}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px;">{note_cell}</td></tr>')
 
-    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Stage</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Note</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
+    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Days</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Note</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
     st.markdown(html_table, unsafe_allow_html=True)
 
     # Show expand/collapse button if needed
@@ -705,7 +761,7 @@ def display_stage_pipeline(display_data: list[dict]):
     fig.update_layout(
         title_text="Stage Pipeline",
         barmode="stack",
-        xaxis_title="Leads",
+        xaxis_title="",
         yaxis_title="",
         yaxis=dict(automargin=True),
         legend=dict(
@@ -1006,7 +1062,10 @@ def display_lead_detail(lead: dict):
         st.markdown("**Appointment Details**")
         st.write(f"📅 Date: {lead.get('Appointment Date', '—')}")
         if days is not None:
-            st.write(f"📊 Days since: {days}")
+            if days < 0:
+                st.write(f"📊 Days until: {abs(days)}")
+            else:
+                st.write(f"📊 Days since: {days}")
 
     with col2:
         st.markdown("**Locator Contact**")
@@ -1028,6 +1087,13 @@ def display_lead_detail(lead: dict):
     # Stage History section (Story 4.2)
     st.divider()
     display_stage_history(lead)
+
+    # Back to top button
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col3:
+        if st.button("↑ Back to top", key=f"back_top_{lead.get('id', '')}", use_container_width=True):
+            st.session_state["scroll_to_top"] = True
+            st.rerun()
 
 
 def display_stage_history(lead: dict):
@@ -1096,16 +1162,106 @@ def display_stage_history(lead: dict):
         st.info("No stage changes recorded")
         return
 
-    # Display transitions in chronological order
-    for item in history:
+    # Build vertical timeline HTML
+    timeline_items = []
+    for i, item in enumerate(history):
         transition = item["transition"]
         timestamp = item["timestamp"]
         is_delivered = item["is_delivered"]
+        is_last = i == len(history) - 1
 
-        if is_delivered:
-            st.success(f"**{transition}** - {timestamp}")
+        # Determine color based on stage content
+        transition_lower = transition.lower()
+        if is_delivered or "delivered" in transition_lower:
+            color = "#28a745"  # Green for delivered
+            icon = "✓"
+        elif "rejected" in transition_lower or "red" in transition_lower:
+            color = "#dc3545"  # Red for rejection
+            icon = "✗"
+        elif "pending" in transition_lower or "decision" in transition_lower:
+            color = "#ffc107"  # Yellow for pending
+            icon = "◉"
+        elif "approved" in transition_lower or "green" in transition_lower:
+            color = "#28a745"  # Green for approved
+            icon = "●"
         else:
-            st.write(f"**{transition}** - {timestamp}")
+            color = "#1a73e8"  # Blue for general progress
+            icon = "●"
+
+        # Line continues unless it's the last item
+        line_style = f"border-left: 2px solid {color};" if not is_last else ""
+
+        timeline_items.append(
+            f'<div style="display:flex;margin-bottom:0;">'
+            f'<div style="display:flex;flex-direction:column;align-items:center;margin-right:12px;">'
+            f'<div style="width:24px;height:24px;border-radius:50%;background:{color};display:flex;align-items:center;justify-content:center;color:white;font-size:12px;font-weight:bold;">{icon}</div>'
+            f'<div style="flex-grow:1;min-height:20px;{line_style}"></div>'
+            f'</div>'
+            f'<div style="padding-bottom:16px;">'
+            f'<div style="font-weight:500;color:#333;font-size:14px;">{_escape_html(transition)}</div>'
+            f'<div style="color:#666;font-size:12px;margin-top:2px;">{_escape_html(timestamp)}</div>'
+            f'</div>'
+            f'</div>'
+        )
+
+    timeline_html = f'<div style="padding:10px 0;">{"".join(timeline_items)}</div>'
+    st.markdown(timeline_html, unsafe_allow_html=True)
+
+
+def _prefetch_stage_histories(leads: list[dict]):
+    """Prefetch stage histories from Supabase cache in a single batch query.
+
+    This dramatically reduces database queries by fetching all cached stage
+    histories at once instead of one query per lead card expansion.
+
+    Results are stored in session state for use by display_stage_history().
+
+    Args:
+        leads: List of formatted lead dictionaries with 'id' and 'Stage' fields
+    """
+    from src.cache import get_cached_stage_histories_batch
+
+    # Get lead IDs that don't already have stage history in session state
+    leads_to_fetch = []
+    for lead in leads:
+        lead_id = lead.get("id")
+        if not lead_id:
+            continue
+        cache_key = f"stage_history_{lead_id}"
+        if cache_key not in st.session_state:
+            leads_to_fetch.append(lead)
+
+    if not leads_to_fetch:
+        return
+
+    lead_ids = [lead.get("id") for lead in leads_to_fetch]
+    leads_by_id = {lead.get("id"): lead for lead in leads_to_fetch}
+
+    # Single batch query to Supabase
+    cached = get_cached_stage_histories_batch(lead_ids)
+
+    # Process and store in session state
+    for lead_id, history in cached.items():
+        lead = leads_by_id.get(lead_id)
+        current_stage = lead.get("Stage") if lead else None
+
+        # Smart invalidation: skip if current stage doesn't match last cached stage
+        if current_stage and history:
+            last_cached_stage = history[-1].get("to_stage") if history else None
+            if last_cached_stage and last_cached_stage != current_stage:
+                # Cache is stale, skip - will fetch fresh from API when card expanded
+                continue
+
+        # Convert datetime strings
+        from src.zoho_client import parse_zoho_date
+        for transition in history:
+            if isinstance(transition.get("changed_at"), str):
+                transition["changed_at"] = parse_zoho_date(transition["changed_at"])
+
+        # Format and store in session state (same format as display_stage_history expects)
+        cache_key = f"stage_history_{lead_id}"
+        st.session_state[cache_key] = format_stage_history(history)
+        st.session_state[f"stage_history_error_{lead_id}"] = False
 
 
 def display_lead_cards(leads: list[dict]):
@@ -1116,7 +1272,12 @@ def display_lead_cards(leads: list[dict]):
     Args:
         leads: List of formatted lead dictionaries
     """
+    # Prefetch stage histories in a single batch query
+    _prefetch_stage_histories(leads)
+
+
     for lead in leads:
+        lead_id = lead.get("id", "")
         lead_name = lead.get("Lead Name", "Unknown")
         stage = lead.get("Stage", "—")
         status = lead.get("Status", "")
@@ -1126,6 +1287,9 @@ def display_lead_cards(leads: list[dict]):
         emoji_prefix = f"{status_emoji} " if status_emoji else ""
 
         expander_label = f"{emoji_prefix}{lead_name} — {stage}"
+
+        # Add anchor for scrolling with data attribute for lead name
+        st.markdown(f'<div id="lead-{lead_id}" data-leadname="{lead_name}"></div>', unsafe_allow_html=True)
 
         with st.expander(expander_label):
             display_lead_detail(lead)
@@ -1149,6 +1313,13 @@ def _capture_daily_snapshot(display_data: list[dict]):
 
 def display_dashboard():
     """Main dashboard display logic."""
+    # Initialize last_refresh from cache if not set (for fresh page loads)
+    if "last_refresh" not in st.session_state:
+        from src.cache import get_leads_cache_age
+        cache_age = get_leads_cache_age()
+        if cache_age:
+            st.session_state.last_refresh = cache_age
+
     # Display header with refresh controls
     display_header()
 
@@ -1246,3 +1417,91 @@ def display_dashboard():
 
 # Run dashboard
 display_dashboard()
+
+# Add JavaScript for lead navigation (must be at end after all content rendered)
+import streamlit.components.v1 as components
+components.html("""
+<script>
+(function() {
+    const doc = window.parent.document;
+
+    // Find the scrollable container
+    const getScrollContainer = () => {
+        return doc.querySelector('[data-testid="stAppViewContainer"]') ||
+               doc.querySelector('.main') ||
+               doc.documentElement;
+    };
+
+    // Scroll to lead and expand
+    const scrollToLead = (leadId) => {
+        const anchor = doc.getElementById('lead-' + leadId);
+        if (!anchor) return;
+
+        // Get lead name from data attribute
+        const leadName = anchor.getAttribute('data-leadname');
+
+        // First, find and expand the expander by matching lead name in summary text
+        const allDetails = doc.querySelectorAll('details');
+        let targetDetails = null;
+
+        for (const details of allDetails) {
+            const summary = details.querySelector('summary');
+            if (summary && leadName && summary.textContent.includes(leadName)) {
+                targetDetails = details;
+                break;
+            }
+        }
+
+        if (targetDetails && !targetDetails.open) {
+            const summary = targetDetails.querySelector('summary');
+            if (summary) {
+                summary.click();
+            }
+        }
+
+        // After expanding, scroll to show the card with padding at top
+        setTimeout(() => {
+            const target = targetDetails || anchor;
+            target.scrollIntoView({behavior: 'smooth', block: 'start'});
+            // Add more padding after scroll completes
+            setTimeout(() => {
+                window.parent.scrollBy({top: -120, behavior: 'smooth'});
+            }, 400);
+        }, 200);
+    };
+
+    // Handle clicks on lead links
+    const handleClick = (e) => {
+        const link = e.target.closest('a[href^="#lead-"]');
+        if (link) {
+            e.preventDefault();
+            e.stopPropagation();
+            const leadId = link.getAttribute('href').replace('#lead-', '');
+            scrollToLead(leadId);
+        }
+    };
+
+    // Attach listener to parent document
+    doc.addEventListener('click', handleClick, true);
+
+    // Add back-to-top button (remove old one first if exists)
+    const existingBtn = doc.getElementById('customBackToTop');
+    if (existingBtn) existingBtn.remove();
+
+    const btn = doc.createElement('button');
+    btn.id = 'customBackToTop';
+    btn.innerHTML = '↑ Top';
+    btn.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#1a73e8;color:white;padding:10px 15px;border-radius:8px;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.2);z-index:10000;cursor:pointer;border:none;display:none;';
+    btn.onclick = () => {
+        window.parent.scrollTo({top: 0, behavior: 'smooth'});
+    };
+    doc.body.appendChild(btn);
+
+    // Show/hide on scroll - check periodically since scroll events can be tricky
+    setInterval(() => {
+        const scrollTop = window.parent.scrollY || doc.documentElement.scrollTop || 0;
+        btn.style.display = scrollTop > 300 ? 'block' : 'none';
+    }, 200);
+})();
+</script>
+""", height=0)

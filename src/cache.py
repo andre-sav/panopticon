@@ -516,6 +516,27 @@ def set_cached_notes(notes: dict[str, str]) -> bool:
         return False
 
 
+def clear_notes_cache() -> bool:
+    """
+    Clear all cached notes (used by Refresh button).
+
+    Returns:
+        True if cleared successfully, False otherwise
+    """
+    client = _get_supabase_client()
+    if not client:
+        return False
+
+    try:
+        client.table("notes_cache").delete().neq("lead_id", "").execute()
+        logger.info("Cleared notes cache")
+        return True
+
+    except Exception as e:
+        logger.error("Error clearing notes cache: %s", e)
+        return False
+
+
 def get_uncached_lead_ids(lead_ids: list[str]) -> list[str]:
     """
     Get list of lead IDs that don't have cached notes.
