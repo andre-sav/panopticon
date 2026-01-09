@@ -794,7 +794,7 @@ def get_stage_history(lead_id: str, current_stage: str = None) -> list[dict] | N
         return None  # Processing error
 
 
-def get_notes_for_leads(lead_ids: list[str]) -> dict[str, str]:
+def get_notes_for_leads(lead_ids: list[str]) -> dict[str, dict]:
     """
     Fetch the most recent note for multiple leads from Zoho CRM.
 
@@ -805,8 +805,8 @@ def get_notes_for_leads(lead_ids: list[str]) -> dict[str, str]:
         lead_ids: List of Zoho lead IDs
 
     Returns:
-        Dict mapping lead_id to the most recent note text.
-        Leads without notes will have empty string value.
+        Dict mapping lead_id to dict with 'content' and 'time' keys.
+        Leads without notes will have empty content and None time.
     """
     from src.cache import get_cached_notes, set_cached_notes, NO_NOTES_MARKER
 
@@ -819,7 +819,6 @@ def get_notes_for_leads(lead_ids: list[str]) -> dict[str, str]:
     cached_notes = get_cached_notes(lead_ids)
 
     # Compute uncached IDs from the result (no extra query needed)
-    # Notes with empty string are considered "checked but no notes"
     uncached_ids = [lid for lid in lead_ids if lid not in cached_notes]
 
     if not uncached_ids:
@@ -843,13 +842,17 @@ def get_notes_for_leads(lead_ids: list[str]) -> dict[str, str]:
         for future in as_completed(future_to_lead):
             lead_id = future_to_lead[future]
             try:
-                note = future.result()
-                fresh_notes[lead_id] = note if note else ""
-                notes_to_cache[lead_id] = note if note else NO_NOTES_MARKER
+                result = future.result()
+                if result:
+                    fresh_notes[lead_id] = {"content": result["content"], "time": result["time"]}
+                    notes_to_cache[lead_id] = {"content": result["content"], "time": result["time"]}
+                else:
+                    fresh_notes[lead_id] = {"content": "", "time": None}
+                    notes_to_cache[lead_id] = {"content": NO_NOTES_MARKER, "time": None}
             except Exception as e:
                 logger.error("Error fetching note for lead %s: %s", lead_id, e)
-                fresh_notes[lead_id] = ""
-                notes_to_cache[lead_id] = NO_NOTES_MARKER
+                fresh_notes[lead_id] = {"content": "", "time": None}
+                notes_to_cache[lead_id] = {"content": NO_NOTES_MARKER, "time": None}
 
     # Cache all results (including "no notes" markers)
     if notes_to_cache:
@@ -861,7 +864,7 @@ def get_notes_for_leads(lead_ids: list[str]) -> dict[str, str]:
     return all_notes
 
 
-def _fetch_latest_note_for_lead(lead_id: str) -> str | None:
+def _fetch_latest_note_for_lead(lead_id: str) -> dict | None:
     """
     Fetch the most recent note for a single lead from Zoho CRM API.
 
@@ -869,7 +872,7 @@ def _fetch_latest_note_for_lead(lead_id: str) -> str | None:
         lead_id: The Zoho lead ID
 
     Returns:
-        The note content text, or None if no notes or error.
+        Dict with 'content' and 'time' keys, or None if no notes or error.
     """
     # Use v2 API - v8 requires 'fields' parameter for Related Notes endpoint
     url = f"{get_api_domain()}/crm/v2/Locatings/{lead_id}/Notes"
@@ -889,7 +892,7 @@ def _fetch_latest_note_for_lead(lead_id: str) -> str | None:
         if not notes:
             return None
 
-        # Get the most recent note's content
+        # Get the most recent note's content and timestamp
         latest_note = notes[0]
         # Try multiple possible field names, also check Note_Title as fallback
         note_content = (
@@ -905,7 +908,18 @@ def _fetch_latest_note_for_lead(lead_id: str) -> str | None:
         if note_content:
             note_content = re.sub(r"<[^>]+>", "", note_content).strip()
 
-        return note_content if note_content else None
+        # Get the timestamp (Modified_Time or Created_Time)
+        note_time = (
+            latest_note.get("Modified_Time")
+            or latest_note.get("modified_time")
+            or latest_note.get("Created_Time")
+            or latest_note.get("created_time")
+        )
+
+        if not note_content:
+            return None
+
+        return {"content": note_content, "time": note_time}
 
     except JSONDecodeError:
         # Empty response or invalid JSON means no notes

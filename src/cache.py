@@ -441,7 +441,7 @@ def get_status_snapshots(days: int = 30) -> list[dict]:
 NO_NOTES_MARKER = "__NO_NOTES__"
 
 
-def get_cached_notes(lead_ids: list[str]) -> dict[str, str]:
+def get_cached_notes(lead_ids: list[str]) -> dict[str, dict]:
     """
     Get cached notes for multiple leads.
 
@@ -452,8 +452,8 @@ def get_cached_notes(lead_ids: list[str]) -> dict[str, str]:
         lead_ids: List of Zoho lead IDs
 
     Returns:
-        Dict mapping lead_id to last_note text.
-        Leads with NO_NOTES_MARKER are returned as empty string.
+        Dict mapping lead_id to dict with 'content' and 'time' keys.
+        Leads with NO_NOTES_MARKER are returned with empty content.
     """
     import streamlit as st
 
@@ -488,7 +488,7 @@ def get_cached_notes(lead_ids: list[str]) -> dict[str, str]:
     try:
         response = (
             client.table("notes_cache")
-            .select("lead_id, last_note")
+            .select("lead_id, last_note, note_time")
             .in_("lead_id", missing_ids)
             .execute()
         )
@@ -499,18 +499,21 @@ def get_cached_notes(lead_ids: list[str]) -> dict[str, str]:
             for record in response.data:
                 lead_id = record["lead_id"]
                 note = record.get("last_note", "")
+                note_time = record.get("note_time")
                 fetched_ids.add(lead_id)
                 if note == NO_NOTES_MARKER:
-                    result[lead_id] = ""
-                    session_cache[lead_id] = ""
+                    note_data = {"content": "", "time": None}
                 elif note:
-                    result[lead_id] = note
-                    session_cache[lead_id] = note
+                    note_data = {"content": note, "time": note_time}
+                else:
+                    note_data = {"content": "", "time": None}
+                result[lead_id] = note_data
+                session_cache[lead_id] = note_data
 
         # Mark IDs not found in Supabase as empty (prevents re-fetching)
         for lead_id in missing_ids:
             if lead_id not in fetched_ids:
-                session_cache[lead_id] = ""
+                session_cache[lead_id] = {"content": "", "time": None}
 
         return result
 
@@ -519,12 +522,12 @@ def get_cached_notes(lead_ids: list[str]) -> dict[str, str]:
         return result
 
 
-def set_cached_notes(notes: dict[str, str]) -> bool:
+def set_cached_notes(notes: dict[str, dict]) -> bool:
     """
     Cache notes for multiple leads.
 
     Args:
-        notes: Dict mapping lead_id to last_note text
+        notes: Dict mapping lead_id to dict with 'content' and 'time' keys
 
     Returns:
         True if cached successfully, False otherwise
@@ -538,10 +541,11 @@ def set_cached_notes(notes: dict[str, str]) -> bool:
         records = [
             {
                 "lead_id": lead_id,
-                "last_note": note,
+                "last_note": note_data.get("content", ""),
+                "note_time": note_data.get("time"),
                 "cached_at": now,
             }
-            for lead_id, note in notes.items()
+            for lead_id, note_data in notes.items()
         ]
 
         client.table("notes_cache").upsert(records).execute()

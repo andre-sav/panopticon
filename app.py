@@ -227,8 +227,9 @@ def display_header():
             # Clear notes cache so fresh notes are fetched
             clear_notes_cache()
 
-            # Clear stage history from session state (will be re-fetched)
-            keys_to_clear = [k for k in st.session_state.keys() if k.startswith("stage_history_")]
+            # Clear stage history and notes from session state (will be re-fetched)
+            keys_to_clear = [k for k in st.session_state.keys()
+                             if k.startswith("stage_history_") or k.startswith("notes_")]
             for key in keys_to_clear:
                 st.session_state.pop(key, None)
 
@@ -1036,16 +1037,31 @@ def display_lead_detail(lead: dict):
 
     # Notes section - use prefetched notes from session state
     st.divider()
-    st.markdown("**Latest Note**")
     lead_id = lead.get("id")
     if lead_id:
         cache_key = f"notes_{lead_id}"
-        note = st.session_state.get(cache_key, "")
-        if note:
-            st.write(note)
+        note_data = st.session_state.get(cache_key, {"content": "", "time": None})
+        note_content = note_data.get("content", "") if isinstance(note_data, dict) else note_data
+        note_time = note_data.get("time") if isinstance(note_data, dict) else None
+
+        # Format the timestamp if available
+        if note_time:
+            from src.zoho_client import parse_zoho_date
+            parsed_time = parse_zoho_date(note_time) if isinstance(note_time, str) else note_time
+            if parsed_time:
+                time_str = parsed_time.strftime("%b %d, %Y at %I:%M %p")
+                st.markdown(f"**Latest Note** ({time_str})")
+            else:
+                st.markdown("**Latest Note**")
+        else:
+            st.markdown("**Latest Note**")
+
+        if note_content:
+            st.write(note_content)
         else:
             st.write("No notes available")
     else:
+        st.markdown("**Latest Note**")
         st.write("No notes available")
 
     # Stage History section (Story 4.2)
@@ -1236,10 +1252,10 @@ def _prefetch_notes(leads: list[dict]):
     # Single batch fetch for all leads
     notes_map = get_notes_for_leads(lead_ids_to_fetch)
 
-    # Store in session state
+    # Store in session state (now stores dict with 'content' and 'time')
     for lead_id in lead_ids_to_fetch:
         cache_key = f"notes_{lead_id}"
-        st.session_state[cache_key] = notes_map.get(lead_id, "")
+        st.session_state[cache_key] = notes_map.get(lead_id, {"content": "", "time": None})
 
 
 def display_lead_cards(leads: list[dict]):
