@@ -26,11 +26,46 @@ def calculate_days_since(appointment_date: datetime) -> int:
     return (today - appointment_date.date()).days
 
 
-def get_lead_status(days_since: int) -> str:
-    """Returns 'stale', 'at_risk', or 'healthy'."""
+def get_lead_status(days_since: int, stage: str = None, days_since_modified: int = None) -> str:
+    """Returns 'stale', 'at_risk', 'needs_attention', or 'healthy'.
+
+    Args:
+        days_since: Days since appointment (negative = future)
+        stage: Current stage name (optional)
+        days_since_modified: Days since last record modification (optional)
+
+    Returns:
+        Status string: 'stale', 'at_risk', 'needs_attention', or 'healthy'
+
+    Stage-specific rules:
+        - "Green/ Delivered" or "Delivery Requested": Always 'healthy'
+        - "Green - Approved By Locator": 'healthy' unless > 7 days since
+          last modification, then 'needs_attention'
+        - "Appt Not Acknowledged": 'at_risk' if < 7 days (waiting for response),
+          'stale' if 7+ days (standard threshold still applies)
+    """
+    stage_lower = stage.lower() if stage else ""
+
+    # "Green/ Delivered" and "Delivery Requested" are always healthy
+    if stage_lower in ("green/ delivered", "delivery requested"):
+        return "healthy"
+
+    # "Green - Approved By Locator" needs attention if > 7 days since modification
+    if stage_lower == "green - approved by locator":
+        if days_since_modified is not None and days_since_modified > 7:
+            return "needs_attention"
+        return "healthy"
+
+    # Standard staleness thresholds apply to all other stages
     if days_since >= STALE_THRESHOLD_DAYS:
         return "stale"
-    elif days_since >= AT_RISK_THRESHOLD_DAYS:
+
+    # "Appt Not Acknowledged" is at_risk even if < 5 days (waiting for locator response)
+    # But still becomes stale at 7+ days (handled above)
+    if stage_lower == "appt not acknowledged":
+        return "at_risk"
+
+    if days_since >= AT_RISK_THRESHOLD_DAYS:
         return "at_risk"
     return "healthy"
 
@@ -38,6 +73,7 @@ def get_lead_status(days_since: int) -> str:
 STATUS_EMOJI_MAP = {
     "stale": "🔴",
     "at_risk": "🟡",
+    "needs_attention": "🟠",
     "healthy": "🟢",
 }
 
@@ -147,6 +183,19 @@ def format_email_link(email: Optional[str]) -> Optional[str]:
     return f"mailto:{email}"
 
 
+def format_zoho_link(lead_id: str) -> str:
+    """
+    Generate Zoho CRM deep link for a lead record.
+
+    Args:
+        lead_id: The Zoho record ID
+
+    Returns:
+        URL to open the record in Zoho CRM
+    """
+    return f"https://crm.zoho.com/crm/org31352869/tab/CustomModule5/{lead_id}"
+
+
 def format_leads_for_display(leads: list[dict]) -> list[dict]:
     """
     Transform lead data for table display.
@@ -160,18 +209,28 @@ def format_leads_for_display(leads: list[dict]) -> list[dict]:
         - Lead Name
         - Appointment Date
         - Days (days since appointment)
-        - Status: stale (7+ days), at_risk (5-6 days), healthy (<5 days)
+        - Status: stale (7+ days), at_risk (5-6 days), needs_attention, healthy (<5 days)
         - Stage
         - Locator
         - Phone (tel: link or None)
         - Email (mailto: link or None)
+        - zoho_link (URL to Zoho CRM record)
     """
     result = []
     for lead in leads:
         days = calculate_days_since(lead["appointment_date"]) if lead.get("appointment_date") else None
-        status = get_lead_status(days) if days is not None else None
+        stage = lead.get("current_stage")
+
+        # Calculate days since modification for stage-specific rules
+        days_since_modified = None
+        if lead.get("modified_time"):
+            days_since_modified = calculate_days_since(lead["modified_time"])
+
+        status = get_lead_status(days, stage, days_since_modified) if days is not None else None
+
+        lead_id = lead.get("id")
         result.append({
-            "id": lead.get("id"),
+            "id": lead_id,
             "Lead Name": safe_display(lead.get("name")),
             "Appointment Date": format_date(lead.get("appointment_date")),
             "Days": days,
@@ -180,13 +239,14 @@ def format_leads_for_display(leads: list[dict]) -> list[dict]:
             "Locator": safe_display(lead.get("locator_name")),
             "Phone": format_phone_link(lead.get("locator_phone")),
             "Email": format_email_link(lead.get("locator_email")),
+            "zoho_link": format_zoho_link(lead_id) if lead_id else None,
         })
     return result
 
 
 def sort_by_urgency(leads: list[dict]) -> list[dict]:
     """
-    Sort leads by urgency: stale first, then at_risk, then healthy.
+    Sort leads by urgency: stale first, then at_risk, then needs_attention, then healthy.
 
     Within each status group, sorts by days descending (oldest/most days first).
     Leads with None days are sorted to the end.
@@ -201,13 +261,15 @@ def sort_by_urgency(leads: list[dict]) -> list[dict]:
         status = lead.get("Status") or ""
         days = lead.get("Days")
 
-        # Status priority: stale=0, at_risk=1, healthy/other=2
+        # Status priority: stale=0, at_risk=1, needs_attention=2, healthy/other=3
         if "stale" in status:
             priority = 0
         elif "at_risk" in status:
             priority = 1
-        else:
+        elif "needs_attention" in status:
             priority = 2
+        else:
+            priority = 3
 
         # Days: higher is more urgent (negate for descending), None goes last
         days_value = -days if days is not None else float("inf")
@@ -225,32 +287,164 @@ def count_leads_by_status(leads: list[dict]) -> dict[str, int]:
         leads: List of formatted lead dictionaries (from format_leads_for_display)
 
     Returns:
-        Dictionary with counts: {"stale": N, "at_risk": N, "healthy": N}
+        Dictionary with counts: {"stale": N, "at_risk": N, "needs_attention": N, "healthy": N}
         Note: Leads with None or empty Status are counted as "healthy".
         The sum of all counts always equals len(leads).
     """
-    counts = {"stale": 0, "at_risk": 0, "healthy": 0}
+    counts = {"stale": 0, "at_risk": 0, "needs_attention": 0, "healthy": 0}
     for lead in leads:
         status = lead.get("Status") or ""
         if "stale" in status:
             counts["stale"] += 1
         elif "at_risk" in status:
             counts["at_risk"] += 1
+        elif "needs_attention" in status:
+            counts["needs_attention"] += 1
         else:
             counts["healthy"] += 1
     return counts
+
+
+def _get_status_key(status: str) -> str:
+    """Extract status key from formatted status string."""
+    status_lower = (status or "").lower()
+    if "stale" in status_lower:
+        return "stale"
+    elif "at_risk" in status_lower:
+        return "at_risk"
+    elif "needs_attention" in status_lower:
+        return "needs_attention"
+    return "healthy"
+
+
+def get_about_to_go_stale(leads: list[dict]) -> list[dict]:
+    """
+    Get leads that are about to go stale (at_risk status, 5-6 days).
+
+    These are the highest priority leads that need action TODAY to prevent
+    them from crossing the 7-day stale threshold.
+
+    Args:
+        leads: List of formatted lead dictionaries (from format_leads_for_display)
+
+    Returns:
+        List of at-risk leads sorted by days descending (closest to stale first).
+        Each dict includes a 'days_until_stale' field.
+    """
+    priority_leads = []
+
+    for lead in leads:
+        status = lead.get("Status") or ""
+        days = lead.get("Days")
+
+        # Only include at_risk leads (5-6 days)
+        if "at_risk" in status.lower() and days is not None:
+            # Calculate days until stale
+            days_until_stale = STALE_THRESHOLD_DAYS - days
+
+            priority_lead = lead.copy()
+            priority_lead["days_until_stale"] = days_until_stale
+            priority_leads.append(priority_lead)
+
+    # Sort by days descending (6 days before 5 days - closest to stale first)
+    priority_leads.sort(key=lambda x: -x.get("Days", 0))
+
+    return priority_leads
+
+
+def count_leads_by_stage(leads: list[dict]) -> list[dict]:
+    """
+    Count leads by stage for pipeline visualization.
+
+    Args:
+        leads: List of formatted lead dictionaries (from format_leads_for_display)
+
+    Returns:
+        List of dicts with stage counts, sorted by total descending:
+        [{"stage": "Stage Name", "count": N, "stale": N, "at_risk": N, ...}, ...]
+    """
+    stage_data = {}
+    for lead in leads:
+        stage = lead.get("Stage") or "Unknown"
+        if stage == "—":
+            stage = "Unknown"
+
+        if stage not in stage_data:
+            stage_data[stage] = {"stage": stage, "count": 0, "stale": 0, "at_risk": 0, "needs_attention": 0, "healthy": 0}
+
+        stage_data[stage]["count"] += 1
+        status_key = _get_status_key(lead.get("Status"))
+        stage_data[stage][status_key] += 1
+
+    # Sort by count descending
+    return sorted(stage_data.values(), key=lambda x: x["count"], reverse=True)
+
+
+def get_locator_workload(leads: list[dict]) -> list[dict]:
+    """
+    Get lead counts by locator with status breakdown.
+
+    Args:
+        leads: List of formatted lead dictionaries (from format_leads_for_display)
+
+    Returns:
+        List of dicts sorted by urgency (stale + at_risk + needs_attention descending):
+        [{"locator": "Name", "total": N, "stale": N, "at_risk": N, "needs_attention": N, "healthy": N}, ...]
+    """
+    locator_data = {}
+    for lead in leads:
+        locator = lead.get("Locator") or "Unknown"
+        if locator == "—":
+            locator = "Unknown"
+
+        if locator not in locator_data:
+            locator_data[locator] = {
+                "locator": locator,
+                "total": 0,
+                "stale": 0,
+                "at_risk": 0,
+                "needs_attention": 0,
+                "healthy": 0,
+            }
+
+        locator_data[locator]["total"] += 1
+        status_key = _get_status_key(lead.get("Status"))
+        locator_data[locator][status_key] += 1
+
+    # Sort by urgency: stale first, then at_risk, then needs_attention, then by total
+    def urgency_sort(item):
+        return (
+            -item["stale"],
+            -item["at_risk"],
+            -item["needs_attention"],
+            -item["total"],
+        )
+
+    return sorted(locator_data.values(), key=urgency_sort)
 
 
 # Filter constants
 ALL_STAGES = "All Stages"
 ALL_LOCATORS = "All Locators"
 ALL_DATES = "All Dates"
+ALL_STATUSES = "All Statuses"
+DEFAULT_DATE_RANGE = "Last 90 Days + Future"
 
 DATE_RANGE_PRESETS = [
     "All Dates",
-    "Today",
-    "Last 7 Days",
-    "Last 30 Days",
+    "Future",
+    "Last 7 Days + Future",
+    "Last 30 Days + Future",
+    "Last 90 Days + Future",
+    "Last 6 Months",
+]
+
+STATUS_FILTER_OPTIONS = [
+    "All Statuses",
+    "Stale",
+    "At Risk",
+    "Needs Attention",
+    "Healthy",
 ]
 
 
@@ -294,13 +488,8 @@ def filter_by_date_range(leads: list[dict], date_range: str) -> list[dict]:
     """
     Filter leads by appointment date range preset.
 
-    Uses the Days column (days since appointment) for filtering:
-    - All Dates: No filter
-    - Today: Days == 0
-    - Last 7 Days: Days >= 0 and Days <= 6 (today + past 6 days = 7 days)
-    - Last 30 Days: Days >= 0 and Days <= 29 (today + past 29 days = 30 days)
-
-    Note: Future appointments (negative Days) are excluded from date range filters.
+    Uses the Days column (days since appointment) for filtering.
+    Options with "+ Future" include both past dates and upcoming appointments.
 
     Args:
         leads: List of formatted lead dictionaries with Days column
@@ -319,14 +508,60 @@ def filter_by_date_range(leads: list[dict], date_range: str) -> list[dict]:
             continue
 
         include = False
-        if date_range == "Today":
-            include = days == 0
-        elif date_range == "Last 7 Days":
-            include = 0 <= days <= 6
-        elif date_range == "Last 30 Days":
-            include = 0 <= days <= 29
+        if date_range == "Future":
+            include = days < 0
+        elif date_range == "Last 7 Days + Future":
+            include = days < 0 or (0 <= days <= 6)
+        elif date_range == "Last 30 Days + Future":
+            include = days < 0 or (0 <= days <= 29)
+        elif date_range == "Last 90 Days + Future":
+            include = days < 0 or (0 <= days <= 89)
+        elif date_range == "Last 6 Months":
+            include = 0 <= days <= 182
 
         if include:
+            result.append(lead)
+
+    return result
+
+
+def filter_by_status(leads: list[dict], status_filter: str) -> list[dict]:
+    """
+    Filter leads by status category.
+
+    Args:
+        leads: List of formatted lead dictionaries
+        status_filter: Status to filter by ("Stale", "At Risk", "Needs Attention", "Healthy")
+                      or "All Statuses" to return all
+
+    Returns:
+        Filtered list of leads matching the status
+    """
+    if status_filter == ALL_STATUSES:
+        return leads
+
+    # Map filter option to status keyword in the formatted Status field
+    status_keywords = {
+        "Stale": "stale",
+        "At Risk": "at_risk",
+        "Needs Attention": "needs_attention",
+        "Healthy": "healthy",
+    }
+
+    keyword = status_keywords.get(status_filter)
+    if not keyword:
+        return leads
+
+    result = []
+    for lead in leads:
+        status = lead.get("Status") or ""
+        status_lower = status.lower()
+
+        if keyword == "healthy":
+            # Healthy is anything that's not stale, at_risk, or needs_attention
+            if "stale" not in status_lower and "at_risk" not in status_lower and "needs_attention" not in status_lower:
+                result.append(lead)
+        elif keyword in status_lower:
             result.append(lead)
 
     return result
@@ -337,6 +572,7 @@ def apply_filters(
     stage: str = ALL_STAGES,
     locator: str = ALL_LOCATORS,
     date_range: str = ALL_DATES,
+    status_filter: str = ALL_STATUSES,
 ) -> list[dict]:
     """
     Apply all filters in sequence (AND logic).
@@ -346,6 +582,7 @@ def apply_filters(
         stage: Stage filter value
         locator: Locator filter value
         date_range: Date range filter value
+        status_filter: Status filter value
 
     Returns:
         List of leads matching ALL filter criteria
@@ -354,6 +591,7 @@ def apply_filters(
     result = filter_by_stage(result, stage)
     result = filter_by_locator(result, locator)
     result = filter_by_date_range(result, date_range)
+    result = filter_by_status(result, status_filter)
     return result
 
 

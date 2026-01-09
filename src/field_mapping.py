@@ -5,24 +5,30 @@ Maps Zoho field names to internal snake_case names.
 """
 
 # Zoho field to internal name mapping
+# Based on ZOHO_API_REFERENCE.md - Locatings module
 ZOHO_FIELD_MAP = {
     "id": "id",
-    "Full_Name": "name",
-    "Appointment_Date": "appointment_date",
+    "Name": "name",  # Location/business name
     "Stage": "current_stage",
-    "Locator_Name": "locator_name",
-    "Locator_Phone": "locator_phone",
-    "Locator_Email": "locator_email",
+    "Locator_Name": "locator_name",  # Lookup field - returns {id, name} object
+    "APPT_Date": "appointment_date",  # Actual appointment date field
+    "Created_Time": "created_time",
+    "Modified_Time": "modified_time",
 }
 
 # Pipeline stage ordering (for sorting/display)
+# Based on ZOHO_API_REFERENCE.md stage flow
 STAGE_ORDER = [
-    "Appt Set",
-    "Appt Acknowledged",
-    "Green",
-    "Green - Pending",
+    "Appt Not Acknowledged",
+    "HLM Follow up",
+    "Green - Approved By Locator",
+    "Green - SiteSurvey Sent",
+    "Green - LLL Approved",
+    "Green - LLL Fulfilled",
+    "Green/No-operator",
     "Delivery Requested",
-    "Delivered",
+    "Green/Delivered",
+    "Declined By Operator",
 ]
 
 

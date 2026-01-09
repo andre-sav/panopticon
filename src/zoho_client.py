@@ -7,10 +7,13 @@ Responsibilities:
 - API request execution
 - Error handling for API calls
 - Lead data fetching
+- Locator lookup from CSV
 """
+import csv
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -21,6 +24,16 @@ from dateutil import parser as dateutil_parser
 from json import JSONDecodeError
 
 from src.field_mapping import ZOHO_FIELD_MAP, map_zoho_lead
+from src.cache import (
+    get_cached_stage_history,
+    set_cached_stage_history,
+    get_cached_leads,
+    set_cached_leads,
+)
+
+# Locator lookup cache (loaded from CSV)
+_locator_lookup: Optional[dict] = None
+LOCATORS_CSV_PATH = Path(__file__).parent.parent / "data" / "locators.csv"
 
 # Constants
 REQUEST_TIMEOUT = 30  # seconds (NFR5)
@@ -34,6 +47,55 @@ ERROR_TYPE_CONNECTION = "connection"
 ERROR_TYPE_TIMEOUT = "timeout"
 ERROR_TYPE_AUTH = "auth"
 ERROR_TYPE_UNKNOWN = "unknown"
+
+
+def _load_locator_lookup() -> dict:
+    """
+    Load locator lookup from CSV file.
+
+    Returns:
+        Dictionary mapping locator ID to locator info dict.
+        Each entry contains: name, email.
+    """
+    global _locator_lookup
+    if _locator_lookup is not None:
+        return _locator_lookup
+
+    _locator_lookup = {}
+
+    if not LOCATORS_CSV_PATH.exists():
+        logger.warning("Locators CSV not found at %s", LOCATORS_CSV_PATH)
+        return _locator_lookup
+
+    try:
+        with open(LOCATORS_CSV_PATH, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                locator_id = row.get("id", "").strip()
+                if locator_id:
+                    _locator_lookup[locator_id] = {
+                        "name": row.get("name", "").strip() or None,
+                        "email": row.get("email", "").strip() or None,
+                    }
+        logger.info("Loaded %d locators from CSV", len(_locator_lookup))
+    except Exception as e:
+        logger.error("Failed to load locators CSV: %s", e)
+
+    return _locator_lookup
+
+
+def get_locator_by_id(locator_id: str) -> Optional[dict]:
+    """
+    Get locator info by Zoho locator ID.
+
+    Args:
+        locator_id: Zoho locator ID (e.g., "1003657000068296073")
+
+    Returns:
+        Dict with 'name', 'email' or None if not found.
+    """
+    lookup = _load_locator_lookup()
+    return lookup.get(locator_id)
 
 
 def _init_session_state() -> None:
@@ -472,14 +534,67 @@ def _map_and_parse_lead(zoho_record: dict) -> dict:
         Lead dictionary with internal field names and parsed dates
     """
     lead = map_zoho_lead(zoho_record)
-    # Parse appointment_date to datetime
+
+    # Handle Locator_Name lookup field
+    # COQL returns {id} only, so look up name/email from CSV
+    locator_data = lead.get("locator_name")
+    if isinstance(locator_data, dict):
+        locator_id = locator_data.get("id")
+        locator_name = locator_data.get("name")  # May be present from standard API
+
+        # Look up locator details from CSV
+        if locator_id:
+            locator_info = get_locator_by_id(locator_id)
+            if locator_info:
+                if not locator_name:
+                    locator_name = locator_info.get("name")
+                lead["locator_email"] = locator_info.get("email")
+
+        lead["locator_name"] = locator_name
+
+    # Parse date fields
     lead["appointment_date"] = parse_zoho_date(lead.get("appointment_date"))
+    lead["modified_time"] = parse_zoho_date(lead.get("modified_time"))
+
     return lead
 
 
-def get_leads_with_appointments() -> list[dict]:
+def _serialize_leads_for_cache(leads: list[dict]) -> list[dict]:
+    """Convert datetime objects to ISO strings for JSON storage."""
+    serialized = []
+    for lead in leads:
+        lead_copy = lead.copy()
+        if lead_copy.get("appointment_date"):
+            lead_copy["appointment_date"] = lead_copy["appointment_date"].isoformat()
+        if lead_copy.get("modified_time"):
+            lead_copy["modified_time"] = lead_copy["modified_time"].isoformat()
+        serialized.append(lead_copy)
+    return serialized
+
+
+def _deserialize_leads_from_cache(leads: list[dict]) -> list[dict]:
+    """Convert ISO strings back to datetime objects from cache."""
+    deserialized = []
+    for lead in leads:
+        lead_copy = lead.copy()
+        if lead_copy.get("appointment_date"):
+            lead_copy["appointment_date"] = parse_zoho_date(lead_copy["appointment_date"])
+        if lead_copy.get("modified_time"):
+            lead_copy["modified_time"] = parse_zoho_date(lead_copy["modified_time"])
+        deserialized.append(lead_copy)
+    return deserialized
+
+
+def get_leads_with_appointments(bypass_cache: bool = False) -> list[dict]:
     """
     Fetch all leads with scheduled appointments from Zoho CRM.
+
+    Uses Supabase cache with 24-hour TTL to reduce API calls.
+    Uses COQL to filter records with appointments server-side.
+    Locator names/emails are looked up from local CSV cache.
+
+    Args:
+        bypass_cache: If True, skip cache and fetch fresh from API (for Refresh button)
 
     Returns:
         List of lead dictionaries with mapped field names.
@@ -492,25 +607,34 @@ def get_leads_with_appointments() -> list[dict]:
             "appointment_date": datetime | None,
             "current_stage": str | None,
             "locator_name": str | None,
-            "locator_phone": str | None,
             "locator_email": str | None,
         }
     """
     _init_session_state()
-    logger.info("Fetching leads with appointments")
 
-    # Build field list from mapping
-    fields = ",".join(ZOHO_FIELD_MAP.keys())
+    # Check cache first (unless bypassed)
+    if not bypass_cache:
+        cached_leads = get_cached_leads()
+        if cached_leads is not None:
+            return _deserialize_leads_from_cache(cached_leads)
 
-    url = f"{get_api_domain()}/crm/v2/Leads"
-    params = {
-        "fields": fields,
-        "criteria": "(Appointment_Date:is_not_empty:)",
-        "per_page": 200,
-    }
+    logger.info("Fetching leads with appointments from API")
+
+    # Use COQL to filter records with appointments server-side (efficient)
+    # Note: COQL doesn't expand lookup fields, so Locator_Name returns ID only
+    # Locator details are looked up from local CSV cache
+    coql_query = """
+        SELECT id, Name, APPT_Date, Stage, Locator_Name, Created_Time, Modified_Time
+        FROM Locatings
+        WHERE APPT_Date is not null
+        ORDER BY APPT_Date DESC
+        LIMIT 2000
+    """.strip()
+
+    url = f"{get_api_domain()}/crm/v8/coql"
 
     try:
-        response = _make_request("GET", url, params=params)
+        response = _make_request("POST", url, json_data={"select_query": coql_query})
         if response is None:
             logger.warning("Failed to fetch leads (no response)")
             return []  # Error already captured in _make_request
@@ -519,7 +643,11 @@ def get_leads_with_appointments() -> list[dict]:
         leads_data = data.get("data", [])
 
         leads = [_map_and_parse_lead(lead) for lead in leads_data]
-        logger.info("Fetched %d leads with appointments", len(leads))
+        logger.info("Fetched %d leads with appointments from API", len(leads))
+
+        # Cache the results
+        set_cached_leads(_serialize_leads_for_cache(leads))
+
         return leads
 
     except JSONDecodeError:
@@ -532,12 +660,18 @@ def get_leads_with_appointments() -> list[dict]:
         return []
 
 
-def get_stage_history(lead_id: str) -> list[dict] | None:
+def get_stage_history(lead_id: str, current_stage: str = None) -> list[dict] | None:
     """
     Fetch stage transition history for a lead from Zoho CRM Timeline API.
 
+    Uses Supabase cache to reduce API calls. Cached data is used if available
+    and not expired (24-hour TTL). Smart invalidation compares the lead's
+    current stage against cached history to detect changes.
+
     Args:
         lead_id: The Zoho CRM lead ID
+        current_stage: The lead's current stage (for smart cache invalidation).
+            If provided and doesn't match the last cached stage, cache is invalidated.
 
     Returns:
         List of stage transition dictionaries in chronological order (oldest first).
@@ -554,12 +688,34 @@ def get_stage_history(lead_id: str) -> list[dict] | None:
         Filters for Stage field changes only.
     """
     _init_session_state()
-    logger.info("Fetching stage history for lead %s", lead_id)
 
-    url = f"{get_api_domain()}/crm/v2/Leads/{lead_id}/__timeline"
+    # Check cache first
+    cached = get_cached_stage_history(lead_id)
+    if cached is not None:
+        # Smart invalidation: compare current stage with last cached stage
+        if current_stage and cached:
+            last_cached_stage = cached[-1].get("to_stage")
+            if last_cached_stage and last_cached_stage != current_stage:
+                logger.info(
+                    "Cache invalidated for lead %s: stage changed from '%s' to '%s'",
+                    lead_id, last_cached_stage, current_stage
+                )
+                cached = None  # Invalidate - will fetch fresh below
+
+    if cached is not None:
+        # Convert cached datetime strings back to datetime objects
+        for transition in cached:
+            if isinstance(transition.get("changed_at"), str):
+                transition["changed_at"] = parse_zoho_date(transition["changed_at"])
+        logger.debug("Using cached stage history for lead %s (%d transitions)", lead_id, len(cached))
+        return cached
+
+    logger.info("Fetching stage history for lead %s from API", lead_id)
+
+    # Timeline API requires v5+
+    url = f"{get_api_domain()}/crm/v5/Locatings/{lead_id}/__timeline"
     params = {
         "per_page": 100,  # Get up to 100 timeline events
-        "filter": "field_update",  # Only field updates
     }
 
     try:
@@ -575,16 +731,18 @@ def get_stage_history(lead_id: str) -> list[dict] | None:
         stage_transitions = []
         for event in timeline_events:
             # Check if this event contains a Stage field change
-            field_history = event.get("field_history", [])
+            field_history = event.get("field_history") or []
             for field_change in field_history:
                 if field_change.get("api_name") == "Stage":
-                    # Parse the timestamp
-                    done_time = event.get("done_time")
-                    changed_at = parse_zoho_date(done_time)
+                    # Parse the timestamp (v5 uses audited_time)
+                    audited_time = event.get("audited_time")
+                    changed_at = parse_zoho_date(audited_time)
 
+                    # v5 format: _value contains {new, old}
+                    value_obj = field_change.get("_value", {})
                     transition = {
-                        "from_stage": field_change.get("_previous_value"),
-                        "to_stage": field_change.get("_value"),
+                        "from_stage": value_obj.get("old"),
+                        "to_stage": value_obj.get("new"),
                         "changed_at": changed_at,
                     }
                     stage_transitions.append(transition)
@@ -595,6 +753,18 @@ def get_stage_history(lead_id: str) -> list[dict] | None:
         )
 
         logger.info("Found %d stage transitions for lead %s", len(stage_transitions), lead_id)
+
+        # Cache the result (convert datetimes to ISO strings for JSON storage)
+        cache_data = []
+        for t in stage_transitions:
+            cache_entry = {
+                "from_stage": t["from_stage"],
+                "to_stage": t["to_stage"],
+                "changed_at": t["changed_at"].isoformat() if t["changed_at"] else None,
+            }
+            cache_data.append(cache_entry)
+        set_cached_stage_history(lead_id, cache_data)
+
         return stage_transitions
 
     except JSONDecodeError:

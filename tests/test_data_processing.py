@@ -93,6 +93,27 @@ class TestGetLeadStatus:
         """Negative days (future appointment) is healthy."""
         assert get_lead_status(-3) == "healthy"
 
+    # Tests for "Appt Not Acknowledged" stage-specific behavior
+    def test_appt_not_acknowledged_stale_at_seven_plus_days(self):
+        """Appt Not Acknowledged still becomes stale at 7+ days."""
+        assert get_lead_status(7, stage="Appt Not Acknowledged") == "stale"
+        assert get_lead_status(10, stage="Appt Not Acknowledged") == "stale"
+
+    def test_appt_not_acknowledged_at_risk_at_five_six_days(self):
+        """Appt Not Acknowledged is at_risk at 5-6 days (same as normal)."""
+        assert get_lead_status(5, stage="Appt Not Acknowledged") == "at_risk"
+        assert get_lead_status(6, stage="Appt Not Acknowledged") == "at_risk"
+
+    def test_appt_not_acknowledged_at_risk_below_five_days(self):
+        """Appt Not Acknowledged is at_risk even below 5 days (unlike normal leads)."""
+        assert get_lead_status(4, stage="Appt Not Acknowledged") == "at_risk"
+        assert get_lead_status(2, stage="Appt Not Acknowledged") == "at_risk"
+        assert get_lead_status(0, stage="Appt Not Acknowledged") == "at_risk"
+
+    def test_appt_not_acknowledged_at_risk_future_appointment(self):
+        """Appt Not Acknowledged is at_risk even for future appointments."""
+        assert get_lead_status(-1, stage="Appt Not Acknowledged") == "at_risk"
+
 
 class TestThresholdConstants:
     """Verify threshold constants match expected values."""
