@@ -38,7 +38,10 @@ def get_lead_status(days_since: int, stage: str = None, days_since_modified: int
         Status string: 'stale', 'at_risk', 'needs_attention', or 'healthy'
 
     Stage-specific rules:
-        - "Green/ Delivered" or "Delivery Requested": Always 'healthy'
+        - Terminal/completion stages are always 'healthy' (no action needed):
+          "Green/ Delivered", "Delivery Requested", "Red/ Rejected",
+          "Green/No operator", "Declined by Operator", "Green - LLL Fulfilled",
+          "Red/Not Viable"
         - "Green - Approved By Locator": 'healthy' unless > 7 days since
           last modification, then 'needs_attention'
         - "Appt Not Acknowledged": 'at_risk' if < 7 days (waiting for response),
@@ -46,8 +49,17 @@ def get_lead_status(days_since: int, stage: str = None, days_since_modified: int
     """
     stage_lower = stage.lower() if stage else ""
 
-    # "Green/ Delivered" and "Delivery Requested" are always healthy
-    if stage_lower in ("green/ delivered", "delivery requested"):
+    # Terminal/completion stages - always healthy (no action needed)
+    terminal_stages = (
+        "green/ delivered",
+        "delivery requested",
+        "red/ rejected",
+        "green/no operator",
+        "declined by operator",
+        "green - lll fulfilled",
+        "red/not viable",
+    )
+    if stage_lower in terminal_stages:
         return "healthy"
 
     # "Green - Approved By Locator" needs attention if > 7 days since modification
