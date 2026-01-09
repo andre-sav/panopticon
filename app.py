@@ -1034,6 +1034,21 @@ def display_lead_detail(lead: dict):
         if not phone and not email:
             st.write("No contact info available")
 
+    # Notes section
+    st.divider()
+    st.markdown("**Latest Note**")
+    lead_id = lead.get("id")
+    if lead_id:
+        from src.zoho_client import get_notes_for_leads
+        notes_map = get_notes_for_leads([lead_id])
+        note = notes_map.get(lead_id, "")
+        if note:
+            st.write(note)
+        else:
+            st.write("No notes available")
+    else:
+        st.write("No notes available")
+
     # Stage History section (Story 4.2)
     st.divider()
     display_stage_history(lead)
