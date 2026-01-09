@@ -263,8 +263,8 @@ class TestFormatLeadsForDisplay:
         # Raw field names should not be present (except id which is needed for stage history)
         assert "locator_phone" not in result[0]
         assert "locator_email" not in result[0]
-        # Should have display columns including id (Story 4.2), Days, Status (Story 2.1, 2.2) and contact links (Story 1.7)
-        assert set(result[0].keys()) == {"id", "Lead Name", "Appointment Date", "Days", "Status", "Stage", "Locator", "Phone", "Email"}
+        # Should have display columns including id (Story 4.2), Days, Status (Story 2.1, 2.2), contact links (Story 1.7), and zoho_link
+        assert set(result[0].keys()) == {"id", "Lead Name", "Appointment Date", "Days", "Status", "Stage", "Locator", "Phone", "Email", "zoho_link"}
 
 
 class TestFormatLastUpdated:

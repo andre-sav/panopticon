@@ -23,6 +23,8 @@ import streamlit as st
 from dateutil import parser as dateutil_parser
 from json import JSONDecodeError
 
+import re
+
 from src.field_mapping import ZOHO_FIELD_MAP, map_zoho_lead
 from src.cache import (
     get_cached_stage_history,
@@ -773,3 +775,109 @@ def get_stage_history(lead_id: str, current_stage: str = None) -> list[dict] | N
     except (KeyError, TypeError, AttributeError) as e:
         logger.error("Error processing stage history: %s", type(e).__name__)
         return None  # Processing error
+
+
+def get_notes_for_leads(lead_ids: list[str]) -> dict[str, str]:
+    """
+    Fetch the most recent note for multiple leads from Zoho CRM.
+
+    Uses Supabase cache to minimize API calls. Only fetches from API
+    for leads not already in cache.
+
+    Args:
+        lead_ids: List of Zoho lead IDs
+
+    Returns:
+        Dict mapping lead_id to the most recent note text.
+        Leads without notes will have empty string value.
+    """
+    from src.cache import get_cached_notes, set_cached_notes, get_uncached_lead_ids, NO_NOTES_MARKER
+
+    _init_session_state()
+
+    if not lead_ids:
+        return {}
+
+    # Get cached notes first
+    cached_notes = get_cached_notes(lead_ids)
+
+    # Find which leads need fresh API data
+    uncached_ids = get_uncached_lead_ids(lead_ids)
+
+    if not uncached_ids:
+        logger.debug("All %d notes served from cache", len(lead_ids))
+        return cached_notes
+
+    logger.info("Fetching notes for %d uncached leads", len(uncached_ids))
+
+    # Fetch notes from API for uncached leads
+    fresh_notes = {}
+    notes_to_cache = {}
+    for lead_id in uncached_ids:
+        note = _fetch_latest_note_for_lead(lead_id)
+        fresh_notes[lead_id] = note if note else ""
+        # Cache ALL results - use NO_NOTES_MARKER for leads without notes
+        notes_to_cache[lead_id] = note if note else NO_NOTES_MARKER
+
+    # Cache all results (including "no notes" markers)
+    if notes_to_cache:
+        set_cached_notes(notes_to_cache)
+        logger.debug("Cached notes for %d leads", len(notes_to_cache))
+
+    # Combine cached and fresh
+    all_notes = {**cached_notes, **fresh_notes}
+    return all_notes
+
+
+def _fetch_latest_note_for_lead(lead_id: str) -> str | None:
+    """
+    Fetch the most recent note for a single lead from Zoho CRM API.
+
+    Args:
+        lead_id: The Zoho lead ID
+
+    Returns:
+        The note content text, or None if no notes or error.
+    """
+    # Use v2 API - v8 requires 'fields' parameter for Related Notes endpoint
+    url = f"{get_api_domain()}/crm/v2/Locatings/{lead_id}/Notes"
+
+    try:
+        response = _make_request("GET", url, params={"per_page": 1, "sort_by": "Modified_Time", "sort_order": "desc"})
+        if response is None:
+            return None
+
+        # Handle empty response body (Zoho returns empty for leads with no notes)
+        if not response.text or not response.text.strip():
+            return None
+
+        data = response.json()
+        notes = data.get("data", [])
+
+        if not notes:
+            return None
+
+        # Get the most recent note's content
+        latest_note = notes[0]
+        # Try multiple possible field names, also check Note_Title as fallback
+        note_content = (
+            latest_note.get("Note_Content")
+            or latest_note.get("note_content")
+            or latest_note.get("Content")
+            or latest_note.get("content")
+            or latest_note.get("Note_Title")  # Fallback to title if no content
+            or ""
+        )
+
+        # Strip HTML tags (Zoho notes contain <p>...</p> etc)
+        if note_content:
+            note_content = re.sub(r"<[^>]+>", "", note_content).strip()
+
+        return note_content if note_content else None
+
+    except JSONDecodeError:
+        # Empty response or invalid JSON means no notes
+        return None
+    except Exception as e:
+        logger.error("Error fetching notes for lead %s: %s", lead_id, e)
+        return None

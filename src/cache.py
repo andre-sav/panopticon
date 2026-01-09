@@ -91,6 +91,47 @@ def get_cached_stage_history(lead_id: str) -> Optional[list]:
         return None
 
 
+def get_cached_stage_histories_batch(lead_ids: list[str]) -> dict[str, list]:
+    """
+    Get cached stage history for multiple leads in a single query.
+
+    Args:
+        lead_ids: List of Zoho lead IDs
+
+    Returns:
+        Dict mapping lead_id to stage history list. Missing leads not included.
+    """
+    client = _get_supabase_client()
+    if not client or not lead_ids:
+        return {}
+
+    try:
+        response = (
+            client.table("stage_history_cache")
+            .select("lead_id, stage_history, cached_at")
+            .in_("lead_id", lead_ids)
+            .execute()
+        )
+
+        if not response.data:
+            return {}
+
+        result = {}
+        now = datetime.now(timezone.utc)
+        for record in response.data:
+            cached_at = datetime.fromisoformat(record["cached_at"].replace("Z", "+00:00"))
+            # Check if cache is still valid
+            if now - cached_at <= timedelta(hours=CACHE_TTL_HOURS):
+                result[record["lead_id"]] = record["stage_history"]
+
+        logger.debug("Batch cache hit for %d/%d leads", len(result), len(lead_ids))
+        return result
+
+    except Exception as e:
+        logger.error("Error reading batch stage history from cache: %s", e)
+        return {}
+
+
 def set_cached_stage_history(lead_id: str, stage_history: list) -> bool:
     """
     Cache stage history for a lead.
@@ -392,3 +433,119 @@ def get_status_snapshots(days: int = 30) -> list[dict]:
     except Exception as e:
         logger.error("Error retrieving status snapshots: %s", e)
         return []
+
+
+# --- Notes Cache ---
+
+# Marker for leads that have been checked but have no notes
+NO_NOTES_MARKER = "__NO_NOTES__"
+
+
+def get_cached_notes(lead_ids: list[str]) -> dict[str, str]:
+    """
+    Get cached notes for multiple leads.
+
+    Args:
+        lead_ids: List of Zoho lead IDs
+
+    Returns:
+        Dict mapping lead_id to last_note text.
+        Leads with NO_NOTES_MARKER are returned as empty string.
+    """
+    client = _get_supabase_client()
+    if not client or not lead_ids:
+        return {}
+
+    try:
+        response = (
+            client.table("notes_cache")
+            .select("lead_id, last_note")
+            .in_("lead_id", lead_ids)
+            .execute()
+        )
+
+        if not response.data:
+            return {}
+
+        # Return all cached notes, converting NO_NOTES_MARKER to empty string
+        result = {}
+        for record in response.data:
+            note = record.get("last_note", "")
+            if note == NO_NOTES_MARKER:
+                result[record["lead_id"]] = ""
+            elif note:
+                result[record["lead_id"]] = note
+        return result
+
+    except Exception as e:
+        logger.error("Error reading notes from cache: %s", e)
+        return {}
+
+
+def set_cached_notes(notes: dict[str, str]) -> bool:
+    """
+    Cache notes for multiple leads.
+
+    Args:
+        notes: Dict mapping lead_id to last_note text
+
+    Returns:
+        True if cached successfully, False otherwise
+    """
+    client = _get_supabase_client()
+    if not client or not notes:
+        return False
+
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        records = [
+            {
+                "lead_id": lead_id,
+                "last_note": note,
+                "cached_at": now,
+            }
+            for lead_id, note in notes.items()
+        ]
+
+        client.table("notes_cache").upsert(records).execute()
+        logger.info("Cached notes for %d leads", len(records))
+        return True
+
+    except Exception as e:
+        logger.error("Error writing notes to cache: %s", e)
+        return False
+
+
+def get_uncached_lead_ids(lead_ids: list[str]) -> list[str]:
+    """
+    Get list of lead IDs that don't have cached notes.
+
+    Args:
+        lead_ids: List of Zoho lead IDs to check
+
+    Returns:
+        List of lead IDs not in cache (including NO_NOTES_MARKER means cached)
+    """
+    client = _get_supabase_client()
+    if not client or not lead_ids:
+        return lead_ids
+
+    try:
+        response = (
+            client.table("notes_cache")
+            .select("lead_id, last_note")
+            .in_("lead_id", lead_ids)
+            .execute()
+        )
+
+        # Consider leads as "cached" if they have any entry (including NO_NOTES_MARKER)
+        cached_ids = {
+            record["lead_id"]
+            for record in (response.data or [])
+            if record.get("last_note")  # Any non-empty value including NO_NOTES_MARKER
+        }
+        return [lid for lid in lead_ids if lid not in cached_ids]
+
+    except Exception as e:
+        logger.error("Error checking notes cache: %s", e)
+        return lead_ids

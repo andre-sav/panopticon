@@ -62,8 +62,100 @@ st.set_page_config(
     layout="wide"
 )
 
-# Header
-st.title("👁️ Panopticon")
+# Custom CSS for visual hierarchy, contrast, and polish
+st.markdown("""
+<style>
+    /* Reduce top padding */
+    .block-container {
+        padding-top: 2rem;
+    }
+
+    /* Hero metric styling for Stale count */
+    .stale-hero {
+        background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+        color: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+    }
+    .stale-hero .metric-value {
+        font-size: 4rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .stale-hero .metric-label {
+        font-size: 1.1rem;
+        opacity: 0.9;
+        margin-top: 0.5rem;
+    }
+
+    /* Secondary metrics */
+    .metric-card {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        text-align: center;
+        border-left: 4px solid;
+    }
+    .metric-card.at-risk { border-left-color: #ffc107; }
+    .metric-card.needs-attention { border-left-color: #fd7e14; }
+    .metric-card.healthy { border-left-color: #28a745; }
+
+    /* Alert tables with max height */
+    .alert-table {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+
+    /* Lead card status borders */
+    div[data-testid="stExpander"] {
+        border-left: 4px solid #e9ecef;
+        border-radius: 4px;
+        margin-bottom: 0.5rem;
+    }
+
+    /* Section headers */
+    .section-header {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #6c757d;
+        margin-bottom: 0.5rem;
+        font-weight: 600;
+    }
+
+    /* Compact dataframe styling */
+    .stDataFrame {
+        font-size: 0.9rem;
+    }
+
+    /* Hide expander chevron/arrow icons for cleaner look */
+    div[data-testid="stExpander"] svg,
+    div[data-testid="stExpander"] details summary svg,
+    [data-testid="stExpanderToggleIcon"],
+    div[data-testid="stExpander"] summary::before,
+    div[data-testid="stExpander"] summary::after,
+    div[data-testid="stExpander"] summary > span:first-child svg,
+    details[data-testid="stExpander"] summary svg,
+    .streamlit-expanderHeader svg,
+    /* Additional selectors for newer Streamlit versions */
+    [data-testid="stExpander"] summary svg,
+    [data-testid="stExpander"] [data-testid="stMarkdownContainer"] + svg,
+    details summary > svg,
+    details summary > span > svg,
+    [class*="stExpander"] summary svg {
+        display: none !important;
+        visibility: hidden !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Header - more compact
+st.markdown("# 👁️ Panopticon")
 st.caption("Lead Follow-up Management Dashboard")
 
 
@@ -78,6 +170,8 @@ def fetch_and_cache_leads(bypass_cache: bool = False):
     Args:
         bypass_cache: If True, skip Supabase cache and fetch fresh from API
     """
+    from src.cache import get_leads_cache_age
+
     # Check if we have existing cached data before fetch
     had_cached_data = "leads" in st.session_state and st.session_state.leads
 
@@ -91,7 +185,9 @@ def fetch_and_cache_leads(bypass_cache: bool = False):
     if leads:
         # Success - update cache and clear errors
         st.session_state.leads = leads
-        st.session_state.last_refresh = datetime.now(timezone.utc)
+        # Use cache timestamp if available, otherwise current time (fresh API call)
+        cache_age = get_leads_cache_age()
+        st.session_state.last_refresh = cache_age if cache_age else datetime.now(timezone.utc)
         clear_error()
     elif had_cached_data and error:
         # Failed to fetch but have cached data - graceful degradation (AC#3)
@@ -168,13 +264,10 @@ def initialize_filter_and_sort_state():
 
 
 def display_filters(display_data: list[dict]):
-    """Display filter controls and return filtered data (Story 3.1).
+    """Display filter controls in a collapsible section.
 
-    Args:
-        display_data: Formatted lead data to filter
-
-    Returns:
-        Filtered lead data based on current filter selections
+    Uses Gestalt principle of enclosure to group filter controls.
+    Collapsed by default to prioritize metrics visibility.
     """
     initialize_filter_and_sort_state()
 
@@ -191,67 +284,72 @@ def display_filters(display_data: list[dict]):
         or st.session_state.sort_option != DEFAULT_SORT
     )
 
-    # Filter and sort row layout - two rows for better organization
-    col1, col2, col3, col4 = st.columns(4)
+    # Create filter summary for collapsed state
+    filter_label = "Filters & Sort"
+    if filters_active:
+        active_filters = []
+        if st.session_state.filter_stage != ALL_STAGES:
+            active_filters.append(f"Stage: {st.session_state.filter_stage[:15]}...")
+        if st.session_state.filter_locator != ALL_LOCATORS:
+            active_filters.append(f"Locator: {st.session_state.filter_locator[:10]}...")
+        if st.session_state.filter_status != ALL_STATUSES:
+            active_filters.append(st.session_state.filter_status)
+        filter_label = f"Filters & Sort ({len(active_filters)} active)"
 
-    with col1:
-        # Reset to default if selected stage no longer exists in data
-        if st.session_state.filter_stage not in stages:
-            st.session_state.filter_stage = ALL_STAGES
-        stage = st.selectbox(
-            "Stage",
-            options=stages,
-            index=stages.index(st.session_state.filter_stage),
-            key="stage_filter_select",
-        )
-        st.session_state.filter_stage = stage
+    with st.expander(filter_label, expanded=filters_active):
+        col1, col2, col3, col4, col5 = st.columns(5)
 
-    with col2:
-        # Reset to default if selected locator no longer exists in data
-        if st.session_state.filter_locator not in locators:
-            st.session_state.filter_locator = ALL_LOCATORS
-        locator = st.selectbox(
-            "Locator",
-            options=locators,
-            index=locators.index(st.session_state.filter_locator),
-            key="locator_filter_select",
-        )
-        st.session_state.filter_locator = locator
+        with col1:
+            if st.session_state.filter_stage not in stages:
+                st.session_state.filter_stage = ALL_STAGES
+            stage = st.selectbox(
+                "Stage",
+                options=stages,
+                index=stages.index(st.session_state.filter_stage),
+                key="stage_filter_select",
+            )
+            st.session_state.filter_stage = stage
 
-    with col3:
-        date_range = st.selectbox(
-            "Date Range",
-            options=DATE_RANGE_PRESETS,
-            index=DATE_RANGE_PRESETS.index(st.session_state.filter_date_range),
-            key="date_range_filter_select",
-        )
-        st.session_state.filter_date_range = date_range
+        with col2:
+            if st.session_state.filter_locator not in locators:
+                st.session_state.filter_locator = ALL_LOCATORS
+            locator = st.selectbox(
+                "Locator",
+                options=locators,
+                index=locators.index(st.session_state.filter_locator),
+                key="locator_filter_select",
+            )
+            st.session_state.filter_locator = locator
 
-    with col4:
-        status_filter = st.selectbox(
-            "Status",
-            options=STATUS_FILTER_OPTIONS,
-            index=STATUS_FILTER_OPTIONS.index(st.session_state.filter_status),
-            key="status_filter_select",
-        )
-        st.session_state.filter_status = status_filter
+        with col3:
+            date_range = st.selectbox(
+                "Date Range",
+                options=DATE_RANGE_PRESETS,
+                index=DATE_RANGE_PRESETS.index(st.session_state.filter_date_range),
+                key="date_range_filter_select",
+            )
+            st.session_state.filter_date_range = date_range
 
-    # Second row: Sort and Reset
-    col5, col6, col7, col8 = st.columns(4)
+        with col4:
+            status_filter = st.selectbox(
+                "Status",
+                options=STATUS_FILTER_OPTIONS,
+                index=STATUS_FILTER_OPTIONS.index(st.session_state.filter_status),
+                key="status_filter_select",
+            )
+            st.session_state.filter_status = status_filter
 
-    with col5:
-        sort_option = st.selectbox(
-            "Sort By",
-            options=SORT_OPTIONS,
-            index=SORT_OPTIONS.index(st.session_state.sort_option),
-            key="sort_option_select",
-        )
-        st.session_state.sort_option = sort_option
+        with col5:
+            sort_option = st.selectbox(
+                "Sort By",
+                options=SORT_OPTIONS,
+                index=SORT_OPTIONS.index(st.session_state.sort_option),
+                key="sort_option_select",
+            )
+            st.session_state.sort_option = sort_option
 
-    with col8:
-        st.write("")  # Spacing to align with dropdowns
         if filters_active:
-            if st.button("Reset All", use_container_width=True):
+            if st.button("Reset All Filters", use_container_width=True):
                 st.session_state.filter_stage = ALL_STAGES
                 st.session_state.filter_locator = ALL_LOCATORS
                 st.session_state.filter_date_range = DEFAULT_DATE_RANGE
@@ -272,43 +370,119 @@ def display_filters(display_data: list[dict]):
 
 
 def display_metrics_cards(display_data: list[dict]):
-    """Display summary metrics cards for lead status counts (Story 2.6).
+    """Display summary metrics with visual hierarchy.
 
-    Shows four metric cards:
-    - Stale count (red indicator)
-    - At Risk count (amber indicator)
-    - Needs Attention count (orange indicator)
-    - Healthy count (green indicator)
-
-    When stale count is 0, shows a positive signal.
+    Uses scale and contrast to emphasize the most critical metric (Stale).
+    Applies Gestalt principle of similarity with consistent color coding.
     """
     counts = count_leads_by_status(display_data)
+    total = len(display_data)
 
-    col1, col2, col3, col4 = st.columns(4)
+    # Layout: Hero metric (Stale) on left, secondary metrics stacked on right
+    hero_col, metrics_col = st.columns([1, 2])
 
-    with col1:
+    with hero_col:
         stale_count = counts["stale"]
         if stale_count == 0:
-            st.metric(label="🔴 Stale", value=0, delta="All clear", delta_color="normal", help="No stale leads!")
+            st.markdown("""
+                <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+                            color: white; padding: 1.5rem; border-radius: 12px;
+                            text-align: center; box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);">
+                    <div style="font-size: 3.5rem; font-weight: 700; line-height: 1;">0</div>
+                    <div style="font-size: 1rem; opacity: 0.9; margin-top: 0.5rem;">Stale Leads</div>
+                    <div style="font-size: 0.85rem; margin-top: 0.25rem;">All clear!</div>
+                </div>
+            """, unsafe_allow_html=True)
         else:
-            st.metric(label="🔴 Stale", value=stale_count, help="Leads 7+ days post appointment with no change in Stage")
+            st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+                            color: white; padding: 1.5rem; border-radius: 12px;
+                            text-align: center; box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);">
+                    <div style="font-size: 3.5rem; font-weight: 700; line-height: 1;">{stale_count}</div>
+                    <div style="font-size: 1rem; opacity: 0.9; margin-top: 0.5rem;">Stale Leads</div>
+                    <div style="font-size: 0.85rem; margin-top: 0.25rem;">7+ days without progress</div>
+                </div>
+            """, unsafe_allow_html=True)
 
-    with col2:
-        st.metric(label="🟡 At Risk", value=counts["at_risk"], help="Leads approaching 7 days post appointment with no change in Stage OR with unacknowledged appointment")
+    with metrics_col:
+        # Secondary metrics in a row
+        m1, m2, m3 = st.columns(3)
 
-    with col3:
-        st.metric(label="🟠 Needs Attention", value=counts["needs_attention"], help="Green - Approved By Locator > 7 days without update")
+        with m1:
+            st.markdown(f"""
+                <div style="background: #fff8e6; padding: 1rem; border-radius: 8px;
+                            border-left: 4px solid #ffc107; text-align: center;">
+                    <div style="font-size: 2rem; font-weight: 600; color: #856404;">{counts["at_risk"]}</div>
+                    <div style="font-size: 0.85rem; color: #856404;">At Risk</div>
+                </div>
+            """, unsafe_allow_html=True)
 
-    with col4:
-        st.metric(label="🟢 Healthy", value=counts["healthy"])
+        with m2:
+            st.markdown(f"""
+                <div style="background: #fff3e6; padding: 1rem; border-radius: 8px;
+                            border-left: 4px solid #fd7e14; text-align: center;">
+                    <div style="font-size: 2rem; font-weight: 600; color: #a04000;">{counts["needs_attention"]}</div>
+                    <div style="font-size: 0.85rem; color: #a04000;">Needs Attention</div>
+                </div>
+            """, unsafe_allow_html=True)
+
+        with m3:
+            st.markdown(f"""
+                <div style="background: #e8f5e9; padding: 1rem; border-radius: 8px;
+                            border-left: 4px solid #28a745; text-align: center;">
+                    <div style="font-size: 2rem; font-weight: 600; color: #1e7e34;">{counts["healthy"]}</div>
+                    <div style="font-size: 0.85rem; color: #1e7e34;">Healthy</div>
+                </div>
+            """, unsafe_allow_html=True)
+
+        # Summary bar showing proportions (Gestalt: continuation)
+        if total > 0:
+            st.markdown("<div style='height: 0.5rem'></div>", unsafe_allow_html=True)
+            stale_pct = (counts["stale"] / total) * 100
+            at_risk_pct = (counts["at_risk"] / total) * 100
+            needs_pct = (counts["needs_attention"] / total) * 100
+            healthy_pct = (counts["healthy"] / total) * 100
+
+            st.markdown(f"""
+                <div style="display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 0.5rem;">
+                    <div style="width: {stale_pct}%; background: #dc3545;" title="Stale: {counts['stale']}"></div>
+                    <div style="width: {at_risk_pct}%; background: #ffc107;" title="At Risk: {counts['at_risk']}"></div>
+                    <div style="width: {needs_pct}%; background: #fd7e14;" title="Needs Attention: {counts['needs_attention']}"></div>
+                    <div style="width: {healthy_pct}%; background: #28a745;" title="Healthy: {counts['healthy']}"></div>
+                </div>
+                <div style="font-size: 0.75rem; color: #6c757d; text-align: center; margin-top: 0.25rem;">
+                    {total} total leads
+                </div>
+            """, unsafe_allow_html=True)
 
 
-def display_priority_list(display_data: list[dict]):
-    """Display 'At Risk' leads priority list.
+import html as html_module
 
-    Shows all at-risk leads with the reason they are flagged,
-    helping prioritize follow-up actions.
+
+def _escape_html(text: str) -> str:
+    """Escape HTML special characters."""
+    if not text:
+        return ""
+    return html_module.escape(str(text))
+
+
+def _truncate_note(note: str, max_len: int = 50) -> str:
+    """Truncate note text for display."""
+    if not note:
+        return "—"
+    if len(note) <= max_len:
+        return note
+    return note[:max_len].rsplit(" ", 1)[0] + "..."
+
+
+def display_priority_list(display_data: list[dict], max_visible: int = 5):
+    """Display 'At Risk' leads priority list with in-place expansion.
+
+    Shows top items by default with toggle button to show all.
+    Lead names are hyperlinks to Zoho CRM.
     """
+    from src.zoho_client import get_notes_for_leads
+
     # Filter to at_risk leads only
     at_risk_leads = [
         lead for lead in display_data
@@ -316,57 +490,94 @@ def display_priority_list(display_data: list[dict]):
     ]
 
     if not at_risk_leads:
-        # No at-risk items - show positive message
-        st.success("**No leads at risk** - You're ahead of the game!")
         return
 
-    # Show warning header with count
-    st.warning(f"**⚠️ {len(at_risk_leads)} lead{'s' if len(at_risk_leads) != 1 else ''} at risk** - Action needed!")
+    # Fetch notes for these leads
+    lead_ids = [lead.get("id") for lead in at_risk_leads if lead.get("id")]
+    notes_map = get_notes_for_leads(lead_ids) if lead_ids else {}
 
-    # Create compact table for at-risk leads
+    # Build table data
     table_data = []
     for lead in at_risk_leads:
-        days = lead.get("Days")
-        stage = lead.get("Stage", "—")
-
-        # Determine reason for at-risk status
-        if stage and "appt not acknowledged" in stage.lower():
-            reason = "Awaiting acknowledgment"
-        elif days is not None and days >= AT_RISK_THRESHOLD_DAYS:
-            reason = f"{days} days since appt"
+        # Format appointment date as MM.DD.YYYY
+        appt_date = lead.get("Appointment Date", "—")
+        if appt_date and appt_date != "—":
+            try:
+                from datetime import datetime as dt
+                parsed = dt.strptime(appt_date, "%b %d, %Y")
+                appt_date_formatted = parsed.strftime("%m.%d.%Y")
+            except (ValueError, TypeError):
+                appt_date_formatted = appt_date
         else:
-            reason = "Needs follow-up"
+            appt_date_formatted = "—"
+
+        lead_id = lead.get("id", "")
+        note = notes_map.get(lead_id, "")
 
         table_data.append({
+            "id": lead_id,
             "Lead": lead.get("Lead Name", "Unknown"),
-            "Reason": reason,
-            "Stage": stage,
+            "Appt Date": appt_date_formatted,
             "Locator": lead.get("Locator", "—"),
-            "Zoho": lead.get("zoho_link", ""),
+            "Note": note,
+            "zoho_link": lead.get("zoho_link", ""),
         })
 
-    df = pd.DataFrame(table_data)
+    total_count = len(table_data)
 
-    st.dataframe(
-        df,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Lead": st.column_config.TextColumn("Lead", width="medium"),
-            "Reason": st.column_config.TextColumn("Reason", width="medium"),
-            "Stage": st.column_config.TextColumn("Stage", width="medium"),
-            "Locator": st.column_config.TextColumn("Locator", width="medium"),
-            "Zoho": st.column_config.LinkColumn("Zoho", width="small", display_text="Open"),
-        },
-    )
+    # Header with count and reason in parentheses
+    st.markdown(f"""
+        <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 0.75rem 1rem;
+                    border-radius: 0 4px 4px 0; margin-bottom: 0.5rem;">
+            <strong>⚠️ {total_count} lead{'s' if total_count != 1 else ''} at risk</strong>
+            <span style="color: #856404;"> (Awaiting acknowledgment)</span>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Initialize expansion state
+    if "at_risk_expanded" not in st.session_state:
+        st.session_state.at_risk_expanded = False
+
+    # Determine which rows to show
+    visible_data = table_data if (total_count <= max_visible or st.session_state.at_risk_expanded) else table_data[:max_visible]
+
+    # Render as HTML table with clickable lead names
+    html_rows = []
+    for row in visible_data:
+        lead_name = _escape_html(row["Lead"])
+        zoho_link = _escape_html(row["zoho_link"])
+        lead_cell = f'<a href="{zoho_link}" target="_blank" style="color: #1a73e8; text-decoration: none;">{lead_name}</a>' if zoho_link else lead_name
+        appt_date = _escape_html(row["Appt Date"])
+        locator = _escape_html(row["Locator"])
+        note_full = _escape_html(row["Note"])
+        note_truncated = _escape_html(_truncate_note(row["Note"]))
+        note_cell = f'<span title="{note_full}">{note_truncated}</span>' if row["Note"] else "—"
+        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px;">{note_cell}</td></tr>')
+
+    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Note</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
+    st.markdown(html_table, unsafe_allow_html=True)
+
+    # Show expand/collapse button if needed
+    if total_count > max_visible:
+        if st.session_state.at_risk_expanded:
+            if st.button("Show less", key="at_risk_collapse"):
+                st.session_state.at_risk_expanded = False
+                st.rerun()
+        else:
+            if st.button(f"Show all {total_count} at-risk leads", key="at_risk_expand"):
+                st.session_state.at_risk_expanded = True
+                st.rerun()
 
 
-def display_needs_attention_list(display_data: list[dict]):
-    """Display 'Needs Attention' leads list.
+def display_needs_attention_list(display_data: list[dict], max_visible: int = 5):
+    """Display 'Needs Attention' leads list with in-place expansion.
 
     Shows leads that need attention (e.g., Green - Approved By Locator
-    with no update in 7+ days).
+    with no update in 7+ days). Shows top N by default with toggle button.
+    Lead names are hyperlinks to Zoho CRM.
     """
+    from src.zoho_client import get_notes_for_leads
+
     # Filter to needs_attention leads only
     needs_attention_leads = [
         lead for lead in display_data
@@ -376,40 +587,84 @@ def display_needs_attention_list(display_data: list[dict]):
     if not needs_attention_leads:
         return
 
-    # Show info header with count
-    st.info(f"**🟠 {len(needs_attention_leads)} lead{'s' if len(needs_attention_leads) != 1 else ''} need{'s' if len(needs_attention_leads) == 1 else ''} attention**")
+    # Fetch notes for these leads
+    lead_ids = [lead.get("id") for lead in needs_attention_leads if lead.get("id")]
+    notes_map = get_notes_for_leads(lead_ids) if lead_ids else {}
 
-    # Create compact table
+    total_count = len(needs_attention_leads)
+
+    # Custom styled header with alert styling and reason in parentheses
+    st.markdown(f"""
+        <div style="background: #fff3cd; border-left: 4px solid #fd7e14; padding: 0.75rem 1rem; margin-bottom: 0.5rem; border-radius: 0 4px 4px 0;">
+            <strong style="color: #856404;">🟠 {total_count} lead{'s' if total_count != 1 else ''} need{'s' if total_count == 1 else ''} attention</strong>
+            <span style="color: #856404;"> (No update in 7+ days)</span>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Create table data
     table_data = []
     for lead in needs_attention_leads:
-        days = lead.get("Days")
         stage = lead.get("Stage", "—")
 
-        # Reason for needs_attention is typically stale in Green - Approved stage
-        reason = "No update in 7+ days"
+        # Format appointment date as MM.DD.YYYY
+        appt_date = lead.get("Appointment Date", "—")
+        if appt_date and appt_date != "—":
+            try:
+                from datetime import datetime as dt
+                parsed = dt.strptime(appt_date, "%b %d, %Y")
+                appt_date_formatted = parsed.strftime("%m.%d.%Y")
+            except (ValueError, TypeError):
+                appt_date_formatted = appt_date
+        else:
+            appt_date_formatted = "—"
+
+        lead_id = lead.get("id", "")
+        note = notes_map.get(lead_id, "")
 
         table_data.append({
+            "id": lead_id,
             "Lead": lead.get("Lead Name", "Unknown"),
-            "Reason": reason,
+            "Appt Date": appt_date_formatted,
             "Stage": stage,
             "Locator": lead.get("Locator", "—"),
-            "Zoho": lead.get("zoho_link", ""),
+            "Note": note,
+            "zoho_link": lead.get("zoho_link", ""),
         })
 
-    df = pd.DataFrame(table_data)
+    # Initialize expansion state
+    if "needs_attention_expanded" not in st.session_state:
+        st.session_state.needs_attention_expanded = False
 
-    st.dataframe(
-        df,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Lead": st.column_config.TextColumn("Lead", width="medium"),
-            "Reason": st.column_config.TextColumn("Reason", width="medium"),
-            "Stage": st.column_config.TextColumn("Stage", width="medium"),
-            "Locator": st.column_config.TextColumn("Locator", width="medium"),
-            "Zoho": st.column_config.LinkColumn("Zoho", width="small", display_text="Open"),
-        },
-    )
+    # Determine which rows to show
+    visible_data = table_data if (total_count <= max_visible or st.session_state.needs_attention_expanded) else table_data[:max_visible]
+
+    # Render as HTML table with clickable lead names
+    html_rows = []
+    for row in visible_data:
+        lead_name = _escape_html(row["Lead"])
+        zoho_link = _escape_html(row["zoho_link"])
+        lead_cell = f'<a href="{zoho_link}" target="_blank" style="color: #1a73e8; text-decoration: none;">{lead_name}</a>' if zoho_link else lead_name
+        appt_date = _escape_html(row["Appt Date"])
+        stage = _escape_html(row["Stage"])
+        locator = _escape_html(row["Locator"])
+        note_full = _escape_html(row["Note"])
+        note_truncated = _escape_html(_truncate_note(row["Note"]))
+        note_cell = f'<span title="{note_full}">{note_truncated}</span>' if row["Note"] else "—"
+        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{stage}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px;">{note_cell}</td></tr>')
+
+    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Stage</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Note</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
+    st.markdown(html_table, unsafe_allow_html=True)
+
+    # Show expand/collapse button if needed
+    if total_count > max_visible:
+        if st.session_state.needs_attention_expanded:
+            if st.button("Show less", key="needs_attention_collapse"):
+                st.session_state.needs_attention_expanded = False
+                st.rerun()
+        else:
+            if st.button(f"Show all {total_count} leads needing attention", key="needs_attention_expand"):
+                st.session_state.needs_attention_expanded = True
+                st.rerun()
 
 
 def display_stage_pipeline(display_data: list[dict]):
@@ -856,6 +1111,8 @@ def display_stage_history(lead: dict):
 def display_lead_cards(leads: list[dict]):
     """Display leads as expandable cards with detail views (Story 4.1).
 
+    Cards have colored status indicators for quick visual identification.
+
     Args:
         leads: List of formatted lead dictionaries
     """
@@ -864,7 +1121,7 @@ def display_lead_cards(leads: list[dict]):
         stage = lead.get("Stage", "—")
         status = lead.get("Status", "")
 
-        # Create expander label with key info
+        # Get colored circle indicator based on status (uses existing helper)
         status_emoji = get_status_emoji(status)
         emoji_prefix = f"{status_emoji} " if status_emoji else ""
 
