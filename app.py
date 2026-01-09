@@ -586,9 +586,8 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
 
     Shows leads that need attention (e.g., Green - Approved By Locator
     with no update in 7+ days). Shows top N by default with toggle button.
-    Lead names are hyperlinks to Zoho CRM.
+    Lead names are hyperlinks to Zoho CRM. Notes are shown in expandable cards.
     """
-    from src.zoho_client import get_notes_for_leads
     from src.data_processing import format_zoho_link
 
     # Filter to needs_attention leads only
@@ -599,10 +598,6 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
 
     if not needs_attention_leads:
         return
-
-    # Fetch notes for these leads
-    lead_ids = [lead.get("id") for lead in needs_attention_leads if lead.get("id")]
-    notes_map = get_notes_for_leads(lead_ids) if lead_ids else {}
 
     total_count = len(needs_attention_leads)
 
@@ -630,7 +625,6 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
             appt_date_formatted = "—"
 
         lead_id = lead.get("id", "")
-        note = notes_map.get(lead_id, "")
         days = lead.get("Days")
         # For needs-attention (past appointments), show just the number (days since)
         days_display = str(abs(days)) if days is not None else "—"
@@ -641,7 +635,6 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
             "Appt Date": appt_date_formatted,
             "Days Since": days_display,
             "Locator": lead.get("Locator", "—"),
-            "Note": note,
             "zoho_url": format_zoho_link(lead_id) if lead_id else "",
         })
 
@@ -661,14 +654,11 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
         appt_date = _escape_html(row["Appt Date"])
         days = _escape_html(row["Days Since"])
         locator = _escape_html(row["Locator"])
-        note_full = _escape_html(row["Note"])
-        note_truncated = _escape_html(_truncate_note(row["Note"]))
-        note_cell = f'<span title="{note_full}">{note_truncated}</span>' if row["Note"] else "—"
         zoho_url = row["zoho_url"]
-        zoho_cell = f'<a href="{zoho_url}" target="_blank" style="color: #1a73e8; text-decoration: none;">Open</a>' if zoho_url else "—"
-        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{days}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; max-width: 200px;">{note_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{zoho_cell}</td></tr>')
+        zoho_cell = f'<a href="{zoho_url}" target="_blank" style="color: #1a73e8; text-decoration: none;">{lead_id}</a>' if zoho_url else "—"
+        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{days}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">{zoho_cell}</td></tr>')
 
-    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Days Since</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Note</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Zoho</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
+    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Days Since</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6;">Zoho</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
     st.markdown(html_table, unsafe_allow_html=True)
 
     # Show expand/collapse button if needed
