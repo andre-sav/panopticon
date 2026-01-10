@@ -959,10 +959,10 @@ def display_appointments_timeline(display_data: list[dict]):
 
 
 def display_status_trend(display_data: list[dict]):
-    """Display line chart showing status percentages over time.
+    """Display stacked area chart showing status distribution over time.
 
-    Shows all status categories as percentage lines, making it easy to see
-    how the composition of leads is shifting over time.
+    Shows all status categories as stacked areas filling to 100%, making it
+    easy to visualize how the composition of leads is shifting over time.
 
     Args:
         display_data: List of formatted lead dictionaries
@@ -976,12 +976,12 @@ def display_status_trend(display_data: list[dict]):
 
     dates = [d["date_label"] for d in trend_data]
 
-    # Calculate percentages for each status
+    # Calculate percentages for each status (order matters for stacking - healthy at bottom)
     status_configs = [
-        ("stale", "Stale", "#dc3545"),
-        ("at_risk", "At Risk", "#ffc107"),
-        ("needs_attention", "Needs Attention", "#fd7e14"),
         ("healthy", "Healthy", "#28a745"),
+        ("needs_attention", "Needs Attention", "#fd7e14"),
+        ("at_risk", "At Risk", "#ffc107"),
+        ("stale", "Stale", "#dc3545"),
     ]
 
     fig = go.Figure()
@@ -1000,10 +1000,12 @@ def display_status_trend(display_data: list[dict]):
             name=label,
             x=dates,
             y=rates,
-            mode="lines+markers",
-            line=dict(color=color, width=2),
-            marker=dict(size=8),
-            hovertemplate="%{y:.1f}%<extra></extra>",
+            mode="lines",
+            line=dict(width=0.5, color=color),
+            fill="tonexty" if field != "healthy" else "tozeroy",
+            fillcolor=color,
+            hovertemplate=f"{label}: %{{y:.1f}}%<extra></extra>",
+            stackgroup="one",
         ))
 
     fig.update_layout(
@@ -1012,6 +1014,7 @@ def display_status_trend(display_data: list[dict]):
         yaxis_title="% of Leads",
         yaxis=dict(
             ticksuffix="%",
+            range=[0, 100],
         ),
         legend=dict(
             orientation="h",
@@ -1019,6 +1022,7 @@ def display_status_trend(display_data: list[dict]):
             y=-0.15,
             xanchor="center",
             x=0.5,
+            traceorder="reversed",
         ),
         margin=dict(t=40, b=60, l=50, r=20),
         height=300,
