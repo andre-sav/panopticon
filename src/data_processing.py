@@ -828,19 +828,19 @@ def format_stage_timestamp(dt: Optional[datetime]) -> str:
 
 # --- Historical Status Trend Calculation ---
 
-def calculate_historical_status_trend(leads: list[dict], days: int = 30) -> list[dict]:
+def calculate_historical_status_trend(leads: list[dict], weeks: int = 4) -> list[dict]:
     """
     Calculate historical status counts by reconstructing what statuses would have been.
 
-    For each day in the past N days, calculates what status each lead would have had
-    based on their appointment date and current stage.
+    For each week in the past N weeks, calculates what status each lead would have had
+    based on their appointment date and current stage. Uses weekly sampling for clarity.
 
     Args:
         leads: List of formatted lead dictionaries (from format_leads_for_display)
-        days: Number of days of history to calculate (default 30)
+        weeks: Number of weeks of history to calculate (default 4)
 
     Returns:
-        List of daily snapshots sorted by date ascending:
+        List of weekly snapshots sorted by date ascending:
         [
             {
                 "date": "2025-12-15",
@@ -889,9 +889,9 @@ def calculate_historical_status_trend(leads: list[dict], days: int = 30) -> list
         "red/not viable",
     )
 
-    # Calculate status counts for each day
-    for days_ago in range(days - 1, -1, -1):  # Start from oldest to newest
-        historical_date = today - timedelta(days=days_ago)
+    # Calculate status counts for each week (sample one day per week)
+    for weeks_ago in range(weeks, -1, -1):  # Start from oldest to newest, include today
+        historical_date = today - timedelta(weeks=weeks_ago)
         counts = {"stale": 0, "at_risk": 0, "needs_attention": 0, "healthy": 0}
 
         for ld in lead_data:

@@ -909,13 +909,13 @@ def display_status_trend(display_data: list[dict]):
     """Display line chart showing status counts over time.
 
     Calculates historical status counts by reconstructing what statuses
-    would have been on each past day based on appointment dates.
+    would have been on each past week based on appointment dates.
 
     Args:
         display_data: List of formatted lead dictionaries
     """
-    # Calculate historical trend from lead data
-    trend_data = calculate_historical_status_trend(display_data, days=30)
+    # Calculate historical trend from lead data (weekly snapshots)
+    trend_data = calculate_historical_status_trend(display_data, weeks=4)
 
     if len(trend_data) < 2:
         st.info("Not enough data for trend chart.")
@@ -942,11 +942,11 @@ def display_status_trend(display_data: list[dict]):
             y=values,
             mode="lines+markers",
             line=dict(color=color, width=2),
-            marker=dict(size=6),
+            marker=dict(size=8),
         ))
 
     fig.update_layout(
-        title_text="Status Trend (Last 30 Days)",
+        title_text="Status Trend (Last 4 Weeks)",
         xaxis_title="",
         yaxis_title="Leads",
         legend=dict(
@@ -958,7 +958,7 @@ def display_status_trend(display_data: list[dict]):
             entrywidth=90,
         ),
         margin=dict(t=40, b=60, l=40, r=20),
-        height=350,
+        height=300,
         hovermode="x unified",
     )
 
@@ -1520,14 +1520,19 @@ def display_dashboard():
 
         st.divider()
 
-        # Display status distribution and stage transitions
-        chart_col1, chart_col2 = st.columns(2)
+        # Display status distribution and appointments timeline
+        # Hide distribution chart when status filter is active (becomes meaningless)
+        status_filter_active = st.session_state.get("filter_status", ALL_STATUSES) != ALL_STATUSES
 
-        with chart_col1:
-            display_status_donut(filtered_data)
-
-        with chart_col2:
+        if status_filter_active:
+            # Just show timeline at full width when distribution is hidden
             display_appointments_timeline(filtered_data)
+        else:
+            chart_col1, chart_col2 = st.columns(2)
+            with chart_col1:
+                display_status_donut(filtered_data)
+            with chart_col2:
+                display_appointments_timeline(filtered_data)
 
         st.divider()
 
