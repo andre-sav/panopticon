@@ -625,7 +625,8 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
                 st.session_state.at_risk_expanded = False
                 st.rerun()
         else:
-            if st.button(f"Show all {total_count} at-risk leads", key="at_risk_expand"):
+            st.caption(f"Showing {max_visible} of {total_count}")
+            if st.button(f"Show all {total_count}", key="at_risk_expand"):
                 st.session_state.at_risk_expanded = True
                 st.rerun()
 
@@ -717,7 +718,8 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
                 st.session_state.needs_attention_expanded = False
                 st.rerun()
         else:
-            if st.button(f"Show all {total_count} leads needing attention", key="needs_attention_expand"):
+            st.caption(f"Showing {max_visible} of {total_count}")
+            if st.button(f"Show all {total_count}", key="needs_attention_expand"):
                 st.session_state.needs_attention_expanded = True
                 st.rerun()
 
@@ -727,6 +729,7 @@ def display_stage_pipeline(display_data: list[dict]):
 
     Visualizes the pipeline to identify where leads are getting stuck.
     Bars are color-coded by status breakdown within each stage.
+    Click on a stage bar to filter the dashboard to that stage.
     """
     stage_data = count_leads_by_stage(display_data)
 
@@ -755,10 +758,11 @@ def display_stage_pipeline(display_data: list[dict]):
             x=values,
             orientation="h",
             marker_color=color,
+            customdata=stages,
         ))
 
     fig.update_layout(
-        title_text="Stage Pipeline",
+        title_text="Stage Pipeline (click to filter)",
         barmode="stack",
         xaxis_title="",
         yaxis_title="",
@@ -775,7 +779,17 @@ def display_stage_pipeline(display_data: list[dict]):
         height=max(300, len(stages) * 25 + 100),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    # Enable click-to-filter with on_select
+    event = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="stage_pipeline_chart")
+
+    # Handle click events - filter to selected stage
+    if event and event.selection and event.selection.points:
+        clicked_point = event.selection.points[0]
+        # Get the stage name from the y-axis value
+        clicked_stage = clicked_point.get("y")
+        if clicked_stage and clicked_stage != st.session_state.get("filter_stage"):
+            st.session_state.filter_stage = clicked_stage
+            st.rerun()
 
 
 def display_locator_workload(display_data: list[dict]):
@@ -967,8 +981,20 @@ def display_status_trend(display_data: list[dict]):
     Args:
         display_data: List of formatted lead dictionaries
     """
-    # Calculate historical trend from lead data (weekly snapshots over 90 days)
-    trend_data = calculate_historical_status_trend(display_data, weeks=13)
+    # Create a cache key from lead data (count + sample of IDs for uniqueness)
+    cache_key = f"trend_{len(display_data)}"
+    if display_data:
+        # Include first and last lead IDs to detect data changes
+        cache_key += f"_{display_data[0].get('id', '')}_{display_data[-1].get('id', '')}"
+
+    # Check session state cache first
+    if "trend_cache_key" in st.session_state and st.session_state.trend_cache_key == cache_key:
+        trend_data = st.session_state.trend_data
+    else:
+        # Calculate and cache
+        trend_data = calculate_historical_status_trend(display_data, weeks=13)
+        st.session_state.trend_cache_key = cache_key
+        st.session_state.trend_data = trend_data
 
     if len(trend_data) < 2:
         st.info("Not enough data for trend chart.")
@@ -1327,7 +1353,7 @@ def display_stage_history(lead: dict):
     history = st.session_state[cache_key]
 
     if not history:
-        st.info("No stage changes recorded")
+        st.info("No stage changes recorded yet. The lead may be new or still in its initial stage.")
         return
 
     # Build vertical timeline HTML
@@ -1596,13 +1622,13 @@ def display_dashboard():
 
         # Handle empty filtered results (AC#12)
         if not filtered_data:
-            st.info("No leads match your filters")
+            st.info("No leads match your current filters. Try adjusting the filters or click 'Reset All Filters' above.")
             return
 
         # Display leads as expandable cards (Story 4.1)
         display_lead_cards(filtered_data)
     else:
-        st.info("No leads with appointments found")
+        st.info("No leads with appointments found. Check that leads in Zoho CRM have appointment dates set.")
 
 
 # Run dashboard
