@@ -327,7 +327,6 @@ def display_filters(display_data: list[dict]):
             st.selectbox(
                 "Stage",
                 options=stages,
-                index=stages.index(st.session_state.filter_stage),
                 key="filter_stage",
             )
 
@@ -335,7 +334,6 @@ def display_filters(display_data: list[dict]):
             st.selectbox(
                 "Locator",
                 options=locators,
-                index=locators.index(st.session_state.filter_locator),
                 key="filter_locator",
             )
 
@@ -343,7 +341,6 @@ def display_filters(display_data: list[dict]):
             st.selectbox(
                 "Date Range",
                 options=DATE_RANGE_PRESETS,
-                index=DATE_RANGE_PRESETS.index(st.session_state.filter_date_range),
                 key="filter_date_range",
             )
 
@@ -351,7 +348,6 @@ def display_filters(display_data: list[dict]):
             st.selectbox(
                 "Status",
                 options=STATUS_FILTER_OPTIONS,
-                index=STATUS_FILTER_OPTIONS.index(st.session_state.filter_status),
                 key="filter_status",
             )
 
@@ -359,7 +355,6 @@ def display_filters(display_data: list[dict]):
             st.selectbox(
                 "Sort By",
                 options=SORT_OPTIONS,
-                index=SORT_OPTIONS.index(st.session_state.sort_option),
                 key="sort_option",
             )
 
