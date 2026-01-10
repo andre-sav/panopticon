@@ -82,12 +82,16 @@ def get_lead_status(days_since: int, stage: str = None, days_since_modified: int
     return "healthy"
 
 
-STATUS_EMOJI_MAP = {
-    "stale": "🔴",
-    "at_risk": "🟡",
-    "needs_attention": "🟠",
-    "healthy": "🟢",
+# Centralized status configuration - single source of truth for emoji, color, and labels
+STATUS_CONFIG = {
+    "stale": {"emoji": "🔴", "color": "#dc3545", "label": "Stale"},
+    "at_risk": {"emoji": "🟡", "color": "#ffc107", "label": "At Risk"},
+    "needs_attention": {"emoji": "🟠", "color": "#fd7e14", "label": "Needs Attention"},
+    "healthy": {"emoji": "🟢", "color": "#28a745", "label": "Healthy"},
 }
+
+# For backwards compatibility
+STATUS_EMOJI_MAP = {k: v["emoji"] for k, v in STATUS_CONFIG.items()}
 
 
 def get_status_emoji(status: Optional[str]) -> str:
@@ -105,10 +109,35 @@ def get_status_emoji(status: Optional[str]) -> str:
         return ""
     # Check if status contains a known status keyword
     status_lower = status.lower() if status else ""
-    for key, emoji in STATUS_EMOJI_MAP.items():
+    for key, config in STATUS_CONFIG.items():
         if key in status_lower:
-            return emoji
+            return config["emoji"]
     return ""
+
+
+def get_status_color(status_key: str) -> str:
+    """
+    Get hex color for a status key.
+
+    Args:
+        status_key: Status key ('stale', 'at_risk', 'needs_attention', 'healthy')
+
+    Returns:
+        Hex color string (e.g., '#dc3545') or gray if unknown
+    """
+    return STATUS_CONFIG.get(status_key, {}).get("color", "#6c757d")
+
+
+def get_status_chart_config() -> list[tuple[str, str, str]]:
+    """
+    Get status configuration for chart rendering.
+
+    Returns:
+        List of tuples: (status_key, label, color)
+        Ordered: stale, at_risk, needs_attention, healthy
+    """
+    order = ["stale", "at_risk", "needs_attention", "healthy"]
+    return [(key, STATUS_CONFIG[key]["label"], STATUS_CONFIG[key]["color"]) for key in order]
 
 
 def format_status_display(status: Optional[str]) -> Optional[str]:
@@ -1131,3 +1160,65 @@ def format_stage_history(transitions: list[dict]) -> list[dict]:
         })
 
     return formatted
+
+
+def get_conversion_funnel(leads: list[dict]) -> list[dict]:
+    """
+    Calculate conversion funnel data showing progression through pipeline.
+
+    Tracks how many leads have progressed through each stage of the sales process:
+    1. Total - All leads with appointments
+    2. Acknowledged - Moved past "Appt Not Acknowledged"
+    3. Approved - Reached approval stage or beyond
+    4. Closed - Reached terminal success stage
+
+    Args:
+        leads: List of formatted lead dictionaries (from format_leads_for_display)
+
+    Returns:
+        List of funnel stages with counts:
+        [{"stage": "Total Leads", "count": N, "pct": 100.0}, ...]
+    """
+    total = len(leads)
+    if total == 0:
+        return []
+
+    # Count leads at each funnel stage
+    acknowledged = 0
+    approved = 0
+    closed = 0
+
+    # Stages that indicate progression past initial
+    not_acknowledged_stage = "appt not acknowledged"
+
+    # Stages indicating approval or beyond
+    approval_stages = frozenset([
+        "green - approved by locator",
+        "green/ delivered",
+        "delivery requested",
+        "green - lll fulfilled",
+        "green/no operator",
+    ])
+
+    for lead in leads:
+        stage = lead.get("Stage", "")
+        stage_lower = stage.lower() if stage else ""
+
+        # Not in initial "unacknowledged" stage = acknowledged
+        if stage_lower != not_acknowledged_stage:
+            acknowledged += 1
+
+        # In approval or terminal success stage
+        if stage_lower in approval_stages or stage_lower in SUCCESSFUL_CLOSE_STAGES:
+            approved += 1
+
+        # In terminal success stage
+        if stage_lower in SUCCESSFUL_CLOSE_STAGES:
+            closed += 1
+
+    return [
+        {"stage": "Total Leads", "count": total, "pct": 100.0},
+        {"stage": "Acknowledged", "count": acknowledged, "pct": round(acknowledged / total * 100, 1) if total else 0},
+        {"stage": "Approved", "count": approved, "pct": round(approved / total * 100, 1) if total else 0},
+        {"stage": "Closed", "count": closed, "pct": round(closed / total * 100, 1) if total else 0},
+    ]

@@ -42,6 +42,8 @@ from src.data_processing import (
     get_about_to_go_stale,
     get_closing_ratio_summary,
     get_closing_ratio_by_month,
+    get_conversion_funnel,
+    get_status_chart_config,
     calculate_historical_status_trend,
     apply_filters,
     get_unique_stages,
@@ -289,6 +291,7 @@ def _reset_all_filters():
     st.session_state.filter_date_range = DEFAULT_DATE_RANGE
     st.session_state.filter_status = ALL_STATUSES
     st.session_state.sort_option = DEFAULT_SORT
+    st.session_state.leads_page = 0  # Reset pagination
 
 
 def display_filters(display_data: list[dict]):
@@ -387,6 +390,34 @@ def display_filters(display_data: list[dict]):
     return filtered_data
 
 
+def _render_metric_card(count: int, label: str, color: str, bg_color: str, text_color: str, is_grayed: bool):
+    """Render a single metric card with consistent styling."""
+    if is_grayed:
+        st.markdown(f"""
+            <div style="background: #e9ecef; padding: 1rem; border-radius: 8px;
+                        border-left: 4px solid #adb5bd; text-align: center; opacity: 0.6;">
+                <div style="font-size: 2rem; font-weight: 600; color: #adb5bd;">0</div>
+                <div style="font-size: 0.85rem; color: #adb5bd;">{label}</div>
+            </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+            <div style="background: {bg_color}; padding: 1rem; border-radius: 8px;
+                        border-left: 4px solid {color}; text-align: center;">
+                <div style="font-size: 2rem; font-weight: 600; color: {text_color};">{count}</div>
+                <div style="font-size: 0.85rem; color: {text_color};">{label}</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+
+# Secondary metric card configurations: (key, label, border_color, bg_color, text_color)
+METRIC_CARD_CONFIG = [
+    ("at_risk", "At Risk", "#ffc107", "#fff8e6", "#856404"),
+    ("needs_attention", "Needs Attention", "#fd7e14", "#fff3e6", "#a04000"),
+    ("healthy", "Healthy", "#28a745", "#e8f5e9", "#1e7e34"),
+]
+
+
 def display_metrics_cards(display_data: list[dict]):
     """Display summary metrics with visual hierarchy.
 
@@ -403,16 +434,15 @@ def display_metrics_cards(display_data: list[dict]):
     # Layout: Hero metric (Stale) on left, secondary metrics stacked on right
     hero_col, metrics_col = st.columns([1, 2])
 
+    # Hero card (Stale) - special styling
     with hero_col:
         stale_count = counts["stale"]
-        # Gray out if filter active and count is 0
         is_grayed = status_filter_active and stale_count == 0
 
         if is_grayed:
             st.markdown("""
-                <div style="background: #e9ecef;
-                            color: #adb5bd; padding: 1.5rem; border-radius: 12px;
-                            text-align: center; opacity: 0.6;">
+                <div style="background: #e9ecef; color: #adb5bd; padding: 1.5rem;
+                            border-radius: 12px; text-align: center; opacity: 0.6;">
                     <div style="font-size: 3.5rem; font-weight: 700; line-height: 1;">0</div>
                     <div style="font-size: 1rem; margin-top: 0.5rem;">Stale Leads</div>
                 </div>
@@ -437,66 +467,14 @@ def display_metrics_cards(display_data: list[dict]):
                 </div>
             """, unsafe_allow_html=True)
 
+    # Secondary metrics using data-driven loop
     with metrics_col:
-        # Secondary metrics in a row
-        m1, m2, m3 = st.columns(3)
-
-        with m1:
-            is_grayed = status_filter_active and counts["at_risk"] == 0
-            if is_grayed:
-                st.markdown("""
-                    <div style="background: #e9ecef; padding: 1rem; border-radius: 8px;
-                                border-left: 4px solid #adb5bd; text-align: center; opacity: 0.6;">
-                        <div style="font-size: 2rem; font-weight: 600; color: #adb5bd;">0</div>
-                        <div style="font-size: 0.85rem; color: #adb5bd;">At Risk</div>
-                    </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                    <div style="background: #fff8e6; padding: 1rem; border-radius: 8px;
-                                border-left: 4px solid #ffc107; text-align: center;">
-                        <div style="font-size: 2rem; font-weight: 600; color: #856404;">{counts["at_risk"]}</div>
-                        <div style="font-size: 0.85rem; color: #856404;">At Risk</div>
-                    </div>
-                """, unsafe_allow_html=True)
-
-        with m2:
-            is_grayed = status_filter_active and counts["needs_attention"] == 0
-            if is_grayed:
-                st.markdown("""
-                    <div style="background: #e9ecef; padding: 1rem; border-radius: 8px;
-                                border-left: 4px solid #adb5bd; text-align: center; opacity: 0.6;">
-                        <div style="font-size: 2rem; font-weight: 600; color: #adb5bd;">0</div>
-                        <div style="font-size: 0.85rem; color: #adb5bd;">Needs Attention</div>
-                    </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                    <div style="background: #fff3e6; padding: 1rem; border-radius: 8px;
-                                border-left: 4px solid #fd7e14; text-align: center;">
-                        <div style="font-size: 2rem; font-weight: 600; color: #a04000;">{counts["needs_attention"]}</div>
-                        <div style="font-size: 0.85rem; color: #a04000;">Needs Attention</div>
-                    </div>
-                """, unsafe_allow_html=True)
-
-        with m3:
-            is_grayed = status_filter_active and counts["healthy"] == 0
-            if is_grayed:
-                st.markdown("""
-                    <div style="background: #e9ecef; padding: 1rem; border-radius: 8px;
-                                border-left: 4px solid #adb5bd; text-align: center; opacity: 0.6;">
-                        <div style="font-size: 2rem; font-weight: 600; color: #adb5bd;">0</div>
-                        <div style="font-size: 0.85rem; color: #adb5bd;">Healthy</div>
-                    </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                    <div style="background: #e8f5e9; padding: 1rem; border-radius: 8px;
-                                border-left: 4px solid #28a745; text-align: center;">
-                        <div style="font-size: 2rem; font-weight: 600; color: #1e7e34;">{counts["healthy"]}</div>
-                        <div style="font-size: 0.85rem; color: #1e7e34;">Healthy</div>
-                    </div>
-                """, unsafe_allow_html=True)
+        columns = st.columns(len(METRIC_CARD_CONFIG))
+        for col, (key, label, color, bg_color, text_color) in zip(columns, METRIC_CARD_CONFIG):
+            with col:
+                count = counts[key]
+                is_grayed = status_filter_active and count == 0
+                _render_metric_card(count, label, color, bg_color, text_color, is_grayed)
 
         # Summary bar showing proportions (Gestalt: continuation)
         if total > 0:
@@ -743,14 +721,8 @@ def display_stage_pipeline(display_data: list[dict]):
     # Build stacked horizontal bar chart with Plotly
     fig = go.Figure()
 
-    status_configs = [
-        ("stale", "Stale", "#dc3545"),
-        ("at_risk", "At Risk", "#ffc107"),
-        ("needs_attention", "Needs Attention", "#fd7e14"),
-        ("healthy", "Healthy", "#28a745"),
-    ]
-
-    for status_key, status_label, color in status_configs:
+    # Use centralized status configuration
+    for status_key, status_label, color in get_status_chart_config():
         values = [d[status_key] for d in stage_data]
         fig.add_trace(go.Bar(
             name=status_label,
@@ -789,6 +761,7 @@ def display_stage_pipeline(display_data: list[dict]):
         clicked_stage = clicked_point.get("y")
         if clicked_stage and clicked_stage != st.session_state.get("filter_stage"):
             st.session_state.filter_stage = clicked_stage
+            st.session_state.leads_page = 0  # Reset pagination when filter changes
             st.rerun()
 
 
@@ -936,12 +909,8 @@ def display_appointments_timeline(display_data: list[dict]):
     fig = go.Figure()
 
     # Add bars in order: healthy (bottom), needs_attention, at_risk, stale (top)
-    status_configs = [
-        ("healthy", "Healthy", "#28a745"),
-        ("needs_attention", "Needs Attention", "#fd7e14"),
-        ("at_risk", "At Risk", "#ffc107"),
-        ("stale", "Stale", "#dc3545"),
-    ]
+    # Reverse the standard config order for bottom-up stacking
+    status_configs = get_status_chart_config()[::-1]
 
     for status_key, status_label, color in status_configs:
         values = [week_status_counts[week][status_key] for week in sorted_weeks]
@@ -1047,6 +1016,51 @@ def display_status_trend(display_data: list[dict]):
         height=280,
         hovermode="x unified",
         showlegend=False,
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def display_conversion_funnel(display_data: list[dict]):
+    """Display conversion funnel showing lead progression through pipeline.
+
+    Shows how leads progress from appointment → acknowledged → approved → closed.
+    """
+    funnel_data = get_conversion_funnel(display_data)
+
+    if not funnel_data:
+        st.info("No data for conversion funnel")
+        return
+
+    st.markdown("### Conversion Funnel")
+
+    # Build funnel chart with Plotly
+    stages = [d["stage"] for d in funnel_data]
+    counts = [d["count"] for d in funnel_data]
+    percentages = [d["pct"] for d in funnel_data]
+
+    # Create hover text with count and percentage
+    hover_text = [f"{stage}<br>{count:,} leads ({pct}%)"
+                  for stage, count, pct in zip(stages, counts, percentages)]
+
+    fig = go.Figure(go.Funnel(
+        y=stages,
+        x=counts,
+        textinfo="value+percent initial",
+        textposition="inside",
+        hovertext=hover_text,
+        hoverinfo="text",
+        marker=dict(
+            color=["#17a2b8", "#28a745", "#ffc107", "#28a745"],
+            line=dict(width=2, color="white")
+        ),
+        connector=dict(line=dict(color="lightgray", width=1)),
+    ))
+
+    fig.update_layout(
+        margin=dict(t=10, b=10, l=10, r=10),
+        height=250,
+        funnelmode="stack",
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -1468,20 +1482,66 @@ def _prefetch_notes(leads: list[dict]):
         st.session_state[cache_key] = notes_map.get(lead_id, {"content": "", "time": None})
 
 
+LEADS_PER_PAGE = 50
+
+
 def display_lead_cards(leads: list[dict]):
-    """Display leads as expandable cards with detail views (Story 4.1).
+    """Display leads as expandable cards with detail views and pagination.
 
     Cards have colored status indicators for quick visual identification.
+    Shows LEADS_PER_PAGE leads at a time with navigation controls.
 
     Args:
         leads: List of formatted lead dictionaries
     """
-    # Prefetch stage histories and notes in batch
-    _prefetch_stage_histories(leads)
-    _prefetch_notes(leads)
+    total_leads = len(leads)
 
+    # Initialize pagination state
+    if "leads_page" not in st.session_state:
+        st.session_state.leads_page = 0
 
-    for lead in leads:
+    # Calculate pagination
+    total_pages = max(1, (total_leads + LEADS_PER_PAGE - 1) // LEADS_PER_PAGE)
+
+    # Ensure current page is valid
+    if st.session_state.leads_page >= total_pages:
+        st.session_state.leads_page = total_pages - 1
+    if st.session_state.leads_page < 0:
+        st.session_state.leads_page = 0
+
+    current_page = st.session_state.leads_page
+    start_idx = current_page * LEADS_PER_PAGE
+    end_idx = min(start_idx + LEADS_PER_PAGE, total_leads)
+
+    # Get leads for current page
+    page_leads = leads[start_idx:end_idx]
+
+    # Prefetch stage histories and notes for current page only
+    _prefetch_stage_histories(page_leads)
+    _prefetch_notes(page_leads)
+
+    # Pagination controls at top if more than one page
+    if total_pages > 1:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col1:
+            if st.button("← Previous", disabled=(current_page == 0), key="prev_page"):
+                st.session_state.leads_page -= 1
+                st.rerun()
+        with col2:
+            st.markdown(
+                f"<div style='text-align: center; padding: 0.5rem;'>"
+                f"Page {current_page + 1} of {total_pages} "
+                f"<span style='color: #666;'>({start_idx + 1}-{end_idx} of {total_leads})</span>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        with col3:
+            if st.button("Next →", disabled=(current_page >= total_pages - 1), key="next_page"):
+                st.session_state.leads_page += 1
+                st.rerun()
+
+    # Render lead cards for current page
+    for lead in page_leads:
         lead_id = lead.get("id", "")
         lead_name = lead.get("Lead Name", "Unknown")
         stage = lead.get("Stage", "—")
@@ -1498,6 +1558,25 @@ def display_lead_cards(leads: list[dict]):
 
         with st.expander(expander_label, expanded=False):
             display_lead_detail(lead)
+
+    # Pagination controls at bottom too if many leads
+    if total_pages > 1:
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col1:
+            if st.button("← Previous", disabled=(current_page == 0), key="prev_page_bottom"):
+                st.session_state.leads_page -= 1
+                st.rerun()
+        with col2:
+            st.markdown(
+                f"<div style='text-align: center; padding: 0.5rem;'>"
+                f"Page {current_page + 1} of {total_pages}"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        with col3:
+            if st.button("Next →", disabled=(current_page >= total_pages - 1), key="next_page_bottom"):
+                st.session_state.leads_page += 1
+                st.rerun()
 
 
 def _capture_daily_snapshot(display_data: list[dict]):
@@ -1606,11 +1685,15 @@ def display_dashboard():
         # Display status trend over time (uses all data, not filtered)
         display_status_trend(display_data)
 
-        # Display closing ratio (hide for short date ranges where data is insufficient)
+        # Display conversion funnel and closing ratio side by side
         date_filter = st.session_state.get("filter_date_range", DEFAULT_DATE_RANGE)
         if date_filter not in ("Last 7 Days + Future", "Future"):
             st.divider()
-            display_closing_ratio(filtered_data, display_data)
+            funnel_col, ratio_col = st.columns(2)
+            with funnel_col:
+                display_conversion_funnel(filtered_data)
+            with ratio_col:
+                display_closing_ratio(filtered_data, display_data)
 
         st.divider()
 
