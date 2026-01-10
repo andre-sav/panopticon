@@ -293,6 +293,12 @@ def display_filters(display_data: list[dict]):
     stages = [ALL_STAGES] + get_unique_stages(display_data)
     locators = [ALL_LOCATORS] + get_unique_locators(display_data)
 
+    # Validate current filter values exist in options (data may have changed)
+    if st.session_state.filter_stage not in stages:
+        st.session_state.filter_stage = ALL_STAGES
+    if st.session_state.filter_locator not in locators:
+        st.session_state.filter_locator = ALL_LOCATORS
+
     # Check if any filters or non-default sort are active
     filters_active = (
         st.session_state.filter_stage != ALL_STAGES
@@ -318,53 +324,44 @@ def display_filters(display_data: list[dict]):
         col1, col2, col3, col4, col5 = st.columns(5)
 
         with col1:
-            if st.session_state.filter_stage not in stages:
-                st.session_state.filter_stage = ALL_STAGES
-            stage = st.selectbox(
+            st.selectbox(
                 "Stage",
                 options=stages,
                 index=stages.index(st.session_state.filter_stage),
-                key="stage_filter_select",
+                key="filter_stage",
             )
-            st.session_state.filter_stage = stage
 
         with col2:
-            if st.session_state.filter_locator not in locators:
-                st.session_state.filter_locator = ALL_LOCATORS
-            locator = st.selectbox(
+            st.selectbox(
                 "Locator",
                 options=locators,
                 index=locators.index(st.session_state.filter_locator),
-                key="locator_filter_select",
+                key="filter_locator",
             )
-            st.session_state.filter_locator = locator
 
         with col3:
-            date_range = st.selectbox(
+            st.selectbox(
                 "Date Range",
                 options=DATE_RANGE_PRESETS,
                 index=DATE_RANGE_PRESETS.index(st.session_state.filter_date_range),
-                key="date_range_filter_select",
+                key="filter_date_range",
             )
-            st.session_state.filter_date_range = date_range
 
         with col4:
-            status_filter = st.selectbox(
+            st.selectbox(
                 "Status",
                 options=STATUS_FILTER_OPTIONS,
                 index=STATUS_FILTER_OPTIONS.index(st.session_state.filter_status),
-                key="status_filter_select",
+                key="filter_status",
             )
-            st.session_state.filter_status = status_filter
 
         with col5:
-            sort_option = st.selectbox(
+            st.selectbox(
                 "Sort By",
                 options=SORT_OPTIONS,
                 index=SORT_OPTIONS.index(st.session_state.sort_option),
-                key="sort_option_select",
+                key="sort_option",
             )
-            st.session_state.sort_option = sort_option
 
         if filters_active:
             if st.button("Reset All Filters", use_container_width=True):
