@@ -392,16 +392,32 @@ def display_metrics_cards(display_data: list[dict]):
 
     Uses scale and contrast to emphasize the most critical metric (Stale).
     Applies Gestalt principle of similarity with consistent color coding.
+    Grays out zero-value cards when a status filter is active.
     """
     counts = count_leads_by_status(display_data)
     total = len(display_data)
+
+    # Check if status filter is active (for graying out zero cards)
+    status_filter_active = st.session_state.get("filter_status", ALL_STATUSES) != ALL_STATUSES
 
     # Layout: Hero metric (Stale) on left, secondary metrics stacked on right
     hero_col, metrics_col = st.columns([1, 2])
 
     with hero_col:
         stale_count = counts["stale"]
-        if stale_count == 0:
+        # Gray out if filter active and count is 0
+        is_grayed = status_filter_active and stale_count == 0
+
+        if is_grayed:
+            st.markdown("""
+                <div style="background: #e9ecef;
+                            color: #adb5bd; padding: 1.5rem; border-radius: 12px;
+                            text-align: center; opacity: 0.6;">
+                    <div style="font-size: 3.5rem; font-weight: 700; line-height: 1;">0</div>
+                    <div style="font-size: 1rem; margin-top: 0.5rem;">Stale Leads</div>
+                </div>
+            """, unsafe_allow_html=True)
+        elif stale_count == 0:
             st.markdown("""
                 <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
                             color: white; padding: 1.5rem; border-radius: 12px;
@@ -426,31 +442,61 @@ def display_metrics_cards(display_data: list[dict]):
         m1, m2, m3 = st.columns(3)
 
         with m1:
-            st.markdown(f"""
-                <div style="background: #fff8e6; padding: 1rem; border-radius: 8px;
-                            border-left: 4px solid #ffc107; text-align: center;">
-                    <div style="font-size: 2rem; font-weight: 600; color: #856404;">{counts["at_risk"]}</div>
-                    <div style="font-size: 0.85rem; color: #856404;">At Risk</div>
-                </div>
-            """, unsafe_allow_html=True)
+            is_grayed = status_filter_active and counts["at_risk"] == 0
+            if is_grayed:
+                st.markdown("""
+                    <div style="background: #e9ecef; padding: 1rem; border-radius: 8px;
+                                border-left: 4px solid #adb5bd; text-align: center; opacity: 0.6;">
+                        <div style="font-size: 2rem; font-weight: 600; color: #adb5bd;">0</div>
+                        <div style="font-size: 0.85rem; color: #adb5bd;">At Risk</div>
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                    <div style="background: #fff8e6; padding: 1rem; border-radius: 8px;
+                                border-left: 4px solid #ffc107; text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 600; color: #856404;">{counts["at_risk"]}</div>
+                        <div style="font-size: 0.85rem; color: #856404;">At Risk</div>
+                    </div>
+                """, unsafe_allow_html=True)
 
         with m2:
-            st.markdown(f"""
-                <div style="background: #fff3e6; padding: 1rem; border-radius: 8px;
-                            border-left: 4px solid #fd7e14; text-align: center;">
-                    <div style="font-size: 2rem; font-weight: 600; color: #a04000;">{counts["needs_attention"]}</div>
-                    <div style="font-size: 0.85rem; color: #a04000;">Needs Attention</div>
-                </div>
-            """, unsafe_allow_html=True)
+            is_grayed = status_filter_active and counts["needs_attention"] == 0
+            if is_grayed:
+                st.markdown("""
+                    <div style="background: #e9ecef; padding: 1rem; border-radius: 8px;
+                                border-left: 4px solid #adb5bd; text-align: center; opacity: 0.6;">
+                        <div style="font-size: 2rem; font-weight: 600; color: #adb5bd;">0</div>
+                        <div style="font-size: 0.85rem; color: #adb5bd;">Needs Attention</div>
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                    <div style="background: #fff3e6; padding: 1rem; border-radius: 8px;
+                                border-left: 4px solid #fd7e14; text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 600; color: #a04000;">{counts["needs_attention"]}</div>
+                        <div style="font-size: 0.85rem; color: #a04000;">Needs Attention</div>
+                    </div>
+                """, unsafe_allow_html=True)
 
         with m3:
-            st.markdown(f"""
-                <div style="background: #e8f5e9; padding: 1rem; border-radius: 8px;
-                            border-left: 4px solid #28a745; text-align: center;">
-                    <div style="font-size: 2rem; font-weight: 600; color: #1e7e34;">{counts["healthy"]}</div>
-                    <div style="font-size: 0.85rem; color: #1e7e34;">Healthy</div>
-                </div>
-            """, unsafe_allow_html=True)
+            is_grayed = status_filter_active and counts["healthy"] == 0
+            if is_grayed:
+                st.markdown("""
+                    <div style="background: #e9ecef; padding: 1rem; border-radius: 8px;
+                                border-left: 4px solid #adb5bd; text-align: center; opacity: 0.6;">
+                        <div style="font-size: 2rem; font-weight: 600; color: #adb5bd;">0</div>
+                        <div style="font-size: 0.85rem; color: #adb5bd;">Healthy</div>
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                    <div style="background: #e8f5e9; padding: 1rem; border-radius: 8px;
+                                border-left: 4px solid #28a745; text-align: center;">
+                        <div style="font-size: 2rem; font-weight: 600; color: #1e7e34;">{counts["healthy"]}</div>
+                        <div style="font-size: 0.85rem; color: #1e7e34;">Healthy</div>
+                    </div>
+                """, unsafe_allow_html=True)
 
         # Summary bar showing proportions (Gestalt: continuation)
         if total > 0:
