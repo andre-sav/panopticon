@@ -228,7 +228,7 @@ def display_header():
 
     with col2:
         is_refreshing = st.session_state.get("refreshing", False)
-        if st.button("🔄 Refresh", disabled=is_refreshing, use_container_width=True):
+        if st.button("🔄 Refresh", disabled=is_refreshing, width="stretch"):
             from src.cache import clear_notes_cache
 
             # Clear session state and set flag to bypass Supabase cache
@@ -381,7 +381,7 @@ def display_filters(display_data: list[dict]):
         if filters_active:
             st.button(
                 "Reset All Filters",
-                use_container_width=True,
+                width="stretch",
                 on_click=_reset_all_filters,
             )
 
@@ -759,7 +759,7 @@ def display_stage_pipeline(display_data: list[dict]):
     )
 
     # Enable click-to-filter with on_select
-    event = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key="stage_pipeline_chart")
+    event = st.plotly_chart(fig, width="stretch", on_select="rerun", key="stage_pipeline_chart")
 
     # Handle click events - filter to selected stage
     if event and event.selection and event.selection.points:
@@ -803,7 +803,7 @@ def display_locator_workload(display_data: list[dict]):
     st.dataframe(
         df,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "Locator": st.column_config.TextColumn("Locator", width="medium"),
             "Total": st.column_config.NumberColumn("Total", width="small"),
@@ -854,7 +854,7 @@ def display_status_donut(display_data: list[dict]):
         height=350,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def display_appointments_timeline(display_data: list[dict]):
@@ -945,7 +945,7 @@ def display_appointments_timeline(display_data: list[dict]):
         height=380,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def display_status_trend(display_data: list[dict]):
@@ -1025,7 +1025,7 @@ def display_status_trend(display_data: list[dict]):
         showlegend=False,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def display_conversion_funnel(display_data: list[dict]):
@@ -1070,7 +1070,7 @@ def display_conversion_funnel(display_data: list[dict]):
         funnelmode="stack",
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def display_closing_ratio(filtered_data: list[dict], all_data: list[dict]):
@@ -1218,7 +1218,7 @@ def display_closing_ratio(filtered_data: list[dict], all_data: list[dict]):
             height=300,
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def display_lead_detail(lead: dict):
@@ -1322,7 +1322,7 @@ def display_lead_detail(lead: dict):
     # Back to top button
     col1, col2, col3 = st.columns([2, 1, 1])
     with col3:
-        if st.button("↑ Back to top", key=f"back_top_{lead.get('id', '')}", use_container_width=True):
+        if st.button("↑ Back to top", key=f"back_top_{lead.get('id', '')}", width="stretch"):
             st.session_state.scroll_to_top = True
             st.rerun()
 
