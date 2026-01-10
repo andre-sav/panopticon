@@ -959,10 +959,10 @@ def display_appointments_timeline(display_data: list[dict]):
 
 
 def display_status_trend(display_data: list[dict]):
-    """Display line chart showing health rate percentage over time.
+    """Display line chart showing status percentages over time.
 
-    Shows a single line tracking the percentage of leads that are healthy,
-    making it easy to see if things are improving or getting worse.
+    Shows all status categories as percentage lines, making it easy to see
+    how the composition of leads is shifting over time.
 
     Args:
         display_data: List of formatted lead dictionaries
@@ -974,53 +974,55 @@ def display_status_trend(display_data: list[dict]):
         st.info("Not enough data for trend chart.")
         return
 
-    # Calculate health rate % for each week
     dates = [d["date_label"] for d in trend_data]
-    health_rates = []
-    for d in trend_data:
-        total = d.get("stale", 0) + d.get("at_risk", 0) + d.get("needs_attention", 0) + d.get("healthy", 0)
-        if total > 0:
-            rate = (d.get("healthy", 0) / total) * 100
-        else:
-            rate = 0
-        health_rates.append(round(rate, 1))
+
+    # Calculate percentages for each status
+    status_configs = [
+        ("stale", "Stale", "#dc3545"),
+        ("at_risk", "At Risk", "#ffc107"),
+        ("needs_attention", "Needs Attention", "#fd7e14"),
+        ("healthy", "Healthy", "#28a745"),
+    ]
 
     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(
-        name="Health Rate",
-        x=dates,
-        y=health_rates,
-        mode="lines+markers",
-        line=dict(color="#28a745", width=3),
-        marker=dict(size=10),
-        hovertemplate="%{y:.1f}%<extra></extra>",
-    ))
+    for field, label, color in status_configs:
+        rates = []
+        for d in trend_data:
+            total = d.get("stale", 0) + d.get("at_risk", 0) + d.get("needs_attention", 0) + d.get("healthy", 0)
+            if total > 0:
+                rate = (d.get(field, 0) / total) * 100
+            else:
+                rate = 0
+            rates.append(round(rate, 1))
 
-    # Calculate Y-axis range to show meaningful variation
-    min_rate = min(health_rates)
-    max_rate = max(health_rates)
-    # Add padding and ensure we show a reasonable range
-    y_min = max(0, min_rate - 5)
-    y_max = min(100, max_rate + 5)
-    # Ensure at least 10% range for visual clarity
-    if y_max - y_min < 10:
-        mid = (y_min + y_max) / 2
-        y_min = max(0, mid - 5)
-        y_max = min(100, mid + 5)
+        fig.add_trace(go.Scatter(
+            name=label,
+            x=dates,
+            y=rates,
+            mode="lines+markers",
+            line=dict(color=color, width=2),
+            marker=dict(size=8),
+            hovertemplate="%{y:.1f}%<extra></extra>",
+        ))
 
     fig.update_layout(
-        title_text="Health Rate Trend (Last 4 Weeks)",
+        title_text="Status Distribution Trend (Last 4 Weeks)",
         xaxis_title="",
-        yaxis_title="% Healthy",
+        yaxis_title="% of Leads",
         yaxis=dict(
-            range=[y_min, y_max],
             ticksuffix="%",
         ),
-        margin=dict(t=40, b=40, l=50, r=20),
-        height=280,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.15,
+            xanchor="center",
+            x=0.5,
+        ),
+        margin=dict(t=40, b=60, l=50, r=20),
+        height=300,
         hovermode="x unified",
-        showlegend=False,
     )
 
     st.plotly_chart(fig, use_container_width=True)
