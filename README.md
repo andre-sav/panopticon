@@ -1,6 +1,6 @@
 # CRM Activity Dashboard
 
-Streamlit dashboard for tracking activity in VendTech's CRM system.
+Streamlit dashboard for tracking activity in CRM system.
 
 ## Development
 
