@@ -167,6 +167,13 @@ if st.session_state.get("scroll_to_top", False):
     scroll_to_here(0, key="scroll_top")
     st.session_state.scroll_to_top = False
 
+# Handle scroll-to-lead query param (from clicking lead links with pagination)
+_scroll_to_param = st.query_params.get("scroll_to")
+if _scroll_to_param:
+    st.session_state.scroll_to_lead = _scroll_to_param
+    st.query_params.clear()
+    st.rerun()
+
 
 def fetch_and_cache_leads(bypass_cache: bool = False):
     """Fetch leads from Zoho CRM and cache in session state.
@@ -1746,15 +1753,7 @@ display_dashboard()
 # Add JavaScript for lead navigation (must be at end after all content rendered)
 import streamlit.components.v1 as components
 
-# Check for scroll_to query param and set session state
-scroll_to_param = st.query_params.get("scroll_to")
-if scroll_to_param:
-    st.session_state.scroll_to_lead = scroll_to_param
-    # Clear the query param
-    st.query_params.clear()
-    st.rerun()
-
-# Get current scroll target for JS
+# Get current scroll target for JS (set at top of file from query param)
 current_scroll_target = st.session_state.get("scroll_to_lead", "")
 
 components.html(f"""
