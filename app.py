@@ -933,12 +933,11 @@ def display_status_trend(display_data: list[dict]):
 
     fig = go.Figure()
 
-    # Add lines for each status
+    # Add lines for problem statuses only (Healthy excluded - not actionable)
     status_configs = [
         ("stale", "Stale", "#dc3545"),
         ("at_risk", "At Risk", "#ffc107"),
         ("needs_attention", "Needs Attention", "#fd7e14"),
-        ("healthy", "Healthy", "#28a745"),
     ]
 
     for field, label, color in status_configs:
@@ -953,7 +952,7 @@ def display_status_trend(display_data: list[dict]):
         ))
 
     fig.update_layout(
-        title_text="Status Trend (Last 4 Weeks)",
+        title_text="Problem Leads Trend (Last 4 Weeks)",
         xaxis_title="",
         yaxis_title="Leads",
         legend=dict(
