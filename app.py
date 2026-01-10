@@ -1487,92 +1487,23 @@ def _prefetch_notes(leads: list[dict]):
         st.session_state[cache_key] = notes_map.get(lead_id, {"content": "", "time": None})
 
 
-LEADS_PER_PAGE = 50
-
-
-def _find_lead_page(leads: list[dict], lead_id: str) -> int:
-    """Find which page a lead is on given its ID.
-
-    Returns page number (0-indexed) or -1 if not found.
-    """
-    for idx, lead in enumerate(leads):
-        if lead.get("id") == lead_id:
-            return idx // LEADS_PER_PAGE
-    return -1
-
-
 def display_lead_cards(leads: list[dict]):
-    """Display leads as expandable cards with detail views and pagination.
+    """Display leads as expandable cards with detail views.
 
     Cards have colored status indicators for quick visual identification.
-    Shows LEADS_PER_PAGE leads at a time with navigation controls.
 
     Args:
         leads: List of formatted lead dictionaries
     """
-    total_leads = len(leads)
+    # Prefetch stage histories and notes for all leads
+    _prefetch_stage_histories(leads)
+    _prefetch_notes(leads)
 
-    # Initialize pagination state
-    if "leads_page" not in st.session_state:
-        st.session_state.leads_page = 0
+    # Show count
+    st.markdown(f"<div style='color: #666; margin-bottom: 0.5rem;'>Showing {len(leads)} leads</div>", unsafe_allow_html=True)
 
-    # Check for scroll target (set by JavaScript when clicking a lead link)
-    scroll_target = st.session_state.get("scroll_to_lead")
-    if scroll_target:
-        # Find which page the lead is on
-        target_page = _find_lead_page(leads, scroll_target)
-        if target_page >= 0:
-            st.session_state.leads_page = target_page
-        # Clear the scroll target after processing (will be re-added by JS for scroll)
-        # Keep it for one more render so JS can use it
-        if st.session_state.get("scroll_target_processed"):
-            del st.session_state.scroll_to_lead
-            del st.session_state.scroll_target_processed
-        else:
-            st.session_state.scroll_target_processed = True
-
-    # Calculate pagination
-    total_pages = max(1, (total_leads + LEADS_PER_PAGE - 1) // LEADS_PER_PAGE)
-
-    # Ensure current page is valid
-    if st.session_state.leads_page >= total_pages:
-        st.session_state.leads_page = total_pages - 1
-    if st.session_state.leads_page < 0:
-        st.session_state.leads_page = 0
-
-    current_page = st.session_state.leads_page
-    start_idx = current_page * LEADS_PER_PAGE
-    end_idx = min(start_idx + LEADS_PER_PAGE, total_leads)
-
-    # Get leads for current page
-    page_leads = leads[start_idx:end_idx]
-
-    # Prefetch stage histories and notes for current page only
-    _prefetch_stage_histories(page_leads)
-    _prefetch_notes(page_leads)
-
-    # Pagination controls at top if more than one page
-    if total_pages > 1:
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col1:
-            if st.button("← Previous", disabled=(current_page == 0), key="prev_page"):
-                st.session_state.leads_page -= 1
-                st.rerun()
-        with col2:
-            st.markdown(
-                f"<div style='text-align: center; padding: 0.5rem;'>"
-                f"Page {current_page + 1} of {total_pages} "
-                f"<span style='color: #666;'>({start_idx + 1}-{end_idx} of {total_leads})</span>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        with col3:
-            if st.button("Next →", disabled=(current_page >= total_pages - 1), key="next_page"):
-                st.session_state.leads_page += 1
-                st.rerun()
-
-    # Render lead cards for current page
-    for lead in page_leads:
+    # Render all lead cards
+    for lead in leads:
         lead_id = lead.get("id", "")
         lead_name = lead.get("Lead Name", "Unknown")
         stage = lead.get("Stage", "—")
@@ -1589,25 +1520,6 @@ def display_lead_cards(leads: list[dict]):
 
         with st.expander(expander_label, expanded=False):
             display_lead_detail(lead)
-
-    # Pagination controls at bottom too if many leads
-    if total_pages > 1:
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col1:
-            if st.button("← Previous", disabled=(current_page == 0), key="prev_page_bottom"):
-                st.session_state.leads_page -= 1
-                st.rerun()
-        with col2:
-            st.markdown(
-                f"<div style='text-align: center; padding: 0.5rem;'>"
-                f"Page {current_page + 1} of {total_pages}"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        with col3:
-            if st.button("Next →", disabled=(current_page >= total_pages - 1), key="next_page_bottom"):
-                st.session_state.leads_page += 1
-                st.rerun()
 
 
 def _capture_daily_snapshot(display_data: list[dict]):
