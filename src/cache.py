@@ -91,9 +91,15 @@ def get_cached_stage_history(lead_id: str) -> Optional[list]:
         return None
 
 
+# Chunk size for batch queries (avoids URL length limits in Supabase)
+BATCH_QUERY_CHUNK_SIZE = 100
+
+
 def get_cached_stage_histories_batch(lead_ids: list[str]) -> dict[str, list]:
     """
-    Get cached stage history for multiple leads in a single query.
+    Get cached stage history for multiple leads.
+
+    Chunks requests to avoid URL length limits with large IN clauses.
 
     Args:
         lead_ids: List of Zoho lead IDs
@@ -105,31 +111,33 @@ def get_cached_stage_histories_batch(lead_ids: list[str]) -> dict[str, list]:
     if not client or not lead_ids:
         return {}
 
-    try:
-        response = (
-            client.table("stage_history_cache")
-            .select("lead_id, stage_history, cached_at")
-            .in_("lead_id", lead_ids)
-            .execute()
-        )
+    result = {}
+    now = datetime.now(timezone.utc)
 
-        if not response.data:
-            return {}
+    # Chunk into smaller batches to avoid URL length limits
+    for i in range(0, len(lead_ids), BATCH_QUERY_CHUNK_SIZE):
+        chunk = lead_ids[i:i + BATCH_QUERY_CHUNK_SIZE]
+        try:
+            response = (
+                client.table("stage_history_cache")
+                .select("lead_id, stage_history, cached_at")
+                .in_("lead_id", chunk)
+                .execute()
+            )
 
-        result = {}
-        now = datetime.now(timezone.utc)
-        for record in response.data:
-            cached_at = datetime.fromisoformat(record["cached_at"].replace("Z", "+00:00"))
-            # Check if cache is still valid
-            if now - cached_at <= timedelta(hours=CACHE_TTL_HOURS):
-                result[record["lead_id"]] = record["stage_history"]
+            if response.data:
+                for record in response.data:
+                    cached_at = datetime.fromisoformat(record["cached_at"].replace("Z", "+00:00"))
+                    # Check if cache is still valid
+                    if now - cached_at <= timedelta(hours=CACHE_TTL_HOURS):
+                        result[record["lead_id"]] = record["stage_history"]
 
-        logger.debug("Batch cache hit for %d/%d leads", len(result), len(lead_ids))
-        return result
+        except Exception as e:
+            logger.error("Error reading batch stage history from cache: %s", e)
+            # Continue with other chunks even if one fails
 
-    except Exception as e:
-        logger.error("Error reading batch stage history from cache: %s", e)
-        return {}
+    logger.debug("Batch cache hit for %d/%d leads", len(result), len(lead_ids))
+    return result
 
 
 def set_cached_stage_history(lead_id: str, stage_history: list) -> bool:
@@ -160,6 +168,45 @@ def set_cached_stage_history(lead_id: str, stage_history: list) -> bool:
 
     except Exception as e:
         logger.error("Error writing to cache: %s", e)
+        return False
+
+
+def set_cached_stage_histories_batch(stage_histories: dict[str, list]) -> bool:
+    """
+    Cache stage history for multiple leads in a single batch upsert.
+
+    Much more efficient than individual writes - reduces network overhead
+    from N requests to 1 request.
+
+    Args:
+        stage_histories: Dict mapping lead_id to stage history list
+
+    Returns:
+        True if cached successfully, False otherwise
+    """
+    client = _get_supabase_client()
+    if not client or not stage_histories:
+        return False
+
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        records = [
+            {
+                "lead_id": lead_id,
+                "stage_history": history,
+                "cached_at": now,
+            }
+            for lead_id, history in stage_histories.items()
+        ]
+
+        # Batch upsert all records at once
+        client.table("stage_history_cache").upsert(records).execute()
+
+        logger.info("Batch cached stage history for %d leads", len(records))
+        return True
+
+    except Exception as e:
+        logger.error("Error batch writing to cache: %s", e)
         return False
 
 
@@ -480,46 +527,50 @@ def get_cached_notes(lead_ids: list[str]) -> dict[str, dict]:
     if not missing_ids:
         return result
 
-    # Fetch missing IDs from Supabase
+    # Fetch missing IDs from Supabase (chunked to avoid URL length limits)
     client = _get_supabase_client()
     if not client:
         return result
 
-    try:
-        response = (
-            client.table("notes_cache")
-            .select("lead_id, last_note, note_time")
-            .in_("lead_id", missing_ids)
-            .execute()
-        )
+    fetched_ids = set()
 
-        # Process response and update both result and session cache
-        fetched_ids = set()
-        if response.data:
-            for record in response.data:
-                lead_id = record["lead_id"]
-                note = record.get("last_note", "")
-                note_time = record.get("note_time")
-                fetched_ids.add(lead_id)
-                if note == NO_NOTES_MARKER:
-                    note_data = {"content": "", "time": None}
-                elif note:
-                    note_data = {"content": note, "time": note_time}
-                else:
-                    note_data = {"content": "", "time": None}
-                result[lead_id] = note_data
-                session_cache[lead_id] = note_data
+    # Chunk into smaller batches to avoid URL length limits
+    for i in range(0, len(missing_ids), BATCH_QUERY_CHUNK_SIZE):
+        chunk = missing_ids[i:i + BATCH_QUERY_CHUNK_SIZE]
+        try:
+            response = (
+                client.table("notes_cache")
+                .select("lead_id, last_note, note_time")
+                .in_("lead_id", chunk)
+                .execute()
+            )
 
-        # Mark IDs not found in Supabase as empty (prevents re-fetching)
-        for lead_id in missing_ids:
-            if lead_id not in fetched_ids:
-                session_cache[lead_id] = {"content": "", "time": None}
+            # Process response and update both result and session cache
+            if response.data:
+                for record in response.data:
+                    lead_id = record["lead_id"]
+                    note = record.get("last_note", "")
+                    note_time = record.get("note_time")
+                    fetched_ids.add(lead_id)
+                    if note == NO_NOTES_MARKER:
+                        note_data = {"content": "", "time": None}
+                    elif note:
+                        note_data = {"content": note, "time": note_time}
+                    else:
+                        note_data = {"content": "", "time": None}
+                    result[lead_id] = note_data
+                    session_cache[lead_id] = note_data
 
-        return result
+        except Exception as e:
+            logger.error("Error reading notes from cache: %s", e)
+            # Continue with other chunks even if one fails
 
-    except Exception as e:
-        logger.error("Error reading notes from cache: %s", e)
-        return result
+    # Mark IDs not found in Supabase as empty (prevents re-fetching)
+    for lead_id in missing_ids:
+        if lead_id not in fetched_ids:
+            session_cache[lead_id] = {"content": "", "time": None}
+
+    return result
 
 
 def set_cached_notes(notes: dict[str, dict]) -> bool:
@@ -589,6 +640,8 @@ def get_uncached_lead_ids(lead_ids: list[str]) -> list[str]:
     """
     Get list of lead IDs that don't have cached notes.
 
+    Chunks requests to avoid URL length limits with large IN clauses.
+
     Args:
         lead_ids: List of Zoho lead IDs to check
 
@@ -599,22 +652,27 @@ def get_uncached_lead_ids(lead_ids: list[str]) -> list[str]:
     if not client or not lead_ids:
         return lead_ids
 
-    try:
-        response = (
-            client.table("notes_cache")
-            .select("lead_id, last_note")
-            .in_("lead_id", lead_ids)
-            .execute()
-        )
+    cached_ids = set()
 
-        # Consider leads as "cached" if they have any entry (including NO_NOTES_MARKER)
-        cached_ids = {
-            record["lead_id"]
-            for record in (response.data or [])
-            if record.get("last_note")  # Any non-empty value including NO_NOTES_MARKER
-        }
-        return [lid for lid in lead_ids if lid not in cached_ids]
+    # Chunk into smaller batches to avoid URL length limits
+    for i in range(0, len(lead_ids), BATCH_QUERY_CHUNK_SIZE):
+        chunk = lead_ids[i:i + BATCH_QUERY_CHUNK_SIZE]
+        try:
+            response = (
+                client.table("notes_cache")
+                .select("lead_id, last_note")
+                .in_("lead_id", chunk)
+                .execute()
+            )
 
-    except Exception as e:
-        logger.error("Error checking notes cache: %s", e)
-        return lead_ids
+            # Consider leads as "cached" if they have any entry (including NO_NOTES_MARKER)
+            if response.data:
+                for record in response.data:
+                    if record.get("last_note"):  # Any non-empty value including NO_NOTES_MARKER
+                        cached_ids.add(record["lead_id"])
+
+        except Exception as e:
+            logger.error("Error checking notes cache: %s", e)
+            # Continue with other chunks even if one fails
+
+    return [lid for lid in lead_ids if lid not in cached_ids]

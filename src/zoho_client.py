@@ -29,6 +29,7 @@ from src.field_mapping import ZOHO_FIELD_MAP, map_zoho_lead
 from src.cache import (
     get_cached_stage_history,
     set_cached_stage_history,
+    set_cached_stage_histories_batch,
     get_cached_leads,
     set_cached_leads,
 )
@@ -286,6 +287,7 @@ def _make_request(
     json_data: Optional[dict] = None,
     retry_on_401: bool = True,
     _rate_limit_retries: int = 0,
+    _prefetched_token: Optional[str] = None,
 ) -> Optional[requests.Response]:
     """
     Make an authenticated API request to Zoho CRM.
@@ -297,16 +299,20 @@ def _make_request(
         json_data: JSON body data
         retry_on_401: Whether to retry with fresh token on 401
         _rate_limit_retries: Internal counter for rate limit retries (do not set)
+        _prefetched_token: Pre-fetched access token (for use in worker threads)
 
     Returns:
         Response object if successful, None if failed.
         On failure, stores error in st.session_state.zoho_error
     """
-    _init_session_state()
-
-    access_token = get_access_token()
-    if access_token is None:
-        return None
+    # Use prefetched token if provided (avoids st.session_state in worker threads)
+    if _prefetched_token:
+        access_token = _prefetched_token
+    else:
+        _init_session_state()
+        access_token = get_access_token()
+        if access_token is None:
+            return None
 
     headers = {
         "Authorization": f"Zoho-oauthtoken {access_token}",
@@ -331,7 +337,8 @@ def _make_request(
         logger.debug("API response: %d (%.2fs)", response.status_code, elapsed)
 
         # Handle 401 Unauthorized - token may have expired
-        if response.status_code == 401 and retry_on_401:
+        # Skip retry if using prefetched token (can't refresh from worker threads)
+        if response.status_code == 401 and retry_on_401 and not _prefetched_token:
             logger.warning("Got 401, refreshing token and retrying")
             # Force token refresh and retry once
             st.session_state.zoho_access_token = None
@@ -365,53 +372,61 @@ def _make_request(
                     json_data=json_data,
                     retry_on_401=retry_on_401,
                     _rate_limit_retries=_rate_limit_retries + 1,
+                    _prefetched_token=_prefetched_token,
                 )
             else:
                 # Max retries exceeded
                 logger.error("Rate limit retries exhausted")
-                _set_error(
-                    "Too many requests to Zoho CRM. "
-                    "Rate limit exceeded after retries. Please try again later.",
-                    ERROR_TYPE_CONNECTION,
-                )
+                # Don't set error in session_state if using prefetched token (worker thread)
+                if not _prefetched_token:
+                    _set_error(
+                        "Too many requests to Zoho CRM. "
+                        "Rate limit exceeded after retries. Please try again later.",
+                        ERROR_TYPE_CONNECTION,
+                    )
                 return None
 
         # Handle other error status codes
         if response.status_code >= 400:
             logger.error("API error: HTTP %d", response.status_code)
-            _set_error(
-                f"Zoho CRM returned an error (status {response.status_code}). "
-                "Please try again or contact support if the issue persists.",
-                ERROR_TYPE_UNKNOWN,
-            )
+            if not _prefetched_token:
+                _set_error(
+                    f"Zoho CRM returned an error (status {response.status_code}). "
+                    "Please try again or contact support if the issue persists.",
+                    ERROR_TYPE_UNKNOWN,
+                )
             return None
 
-        # Success - clear any previous errors
-        _clear_error()
+        # Success - clear any previous errors (skip in worker threads)
+        if not _prefetched_token:
+            _clear_error()
         return response
 
     except requests.exceptions.Timeout:
         logger.error("API request timed out after %ds", REQUEST_TIMEOUT)
-        _set_error(
-            "Request timed out. Zoho may be slow. Please try again.",
-            ERROR_TYPE_TIMEOUT,
-        )
+        if not _prefetched_token:
+            _set_error(
+                "Request timed out. Zoho may be slow. Please try again.",
+                ERROR_TYPE_TIMEOUT,
+            )
         return None
     except requests.exceptions.ConnectionError as e:
         logger.error("API connection error: %s", type(e).__name__)
-        _set_error(
-            "Unable to connect to Zoho CRM. "
-            "Please check your connection and try again.",
-            ERROR_TYPE_CONNECTION,
-        )
+        if not _prefetched_token:
+            _set_error(
+                "Unable to connect to Zoho CRM. "
+                "Please check your connection and try again.",
+                ERROR_TYPE_CONNECTION,
+            )
         return None
     except requests.exceptions.RequestException as e:
         logger.error("API request error: %s", type(e).__name__)
-        _set_error(
-            "An error occurred while communicating with Zoho CRM. "
-            "Please try again.",
-            ERROR_TYPE_UNKNOWN,
-        )
+        if not _prefetched_token:
+            _set_error(
+                "An error occurred while communicating with Zoho CRM. "
+                "Please try again.",
+                ERROR_TYPE_UNKNOWN,
+            )
         return None
 
 
@@ -856,48 +871,88 @@ def get_stage_histories_batch(leads: list[dict]) -> dict[str, list]:
 
     logger.info("Fetching stage history for %d uncached leads concurrently", len(uncached_leads))
 
+    # Pre-fetch credentials in main thread to avoid Streamlit context issues in workers
+    prefetched_token = get_access_token()
+    prefetched_domain = get_api_domain()
+
+    if not prefetched_token:
+        logger.error("Cannot fetch stage history: no access token")
+        return result
+
     # Fetch uncached leads concurrently (max 10 concurrent to avoid rate limits)
-    def fetch_single(lead):
+    # Note: Workers only fetch data - caching happens in main thread to avoid
+    # Streamlit context issues with ThreadPoolExecutor
+    def fetch_single(lead, token, domain):
         lead_id = lead.get("id")
         current_stage = lead.get("Stage")
         # Use internal fetch logic without cache check (we already checked)
-        return lead_id, _fetch_stage_history_from_api(lead_id, current_stage)
+        # Pass prefetched credentials to avoid st.session_state/st.secrets access in threads
+        return lead_id, _fetch_stage_history_from_api(
+            lead_id, current_stage,
+            skip_cache=True,
+            _prefetched_token=token,
+            _api_domain=domain,
+        )
 
+    to_cache = {}  # Collect results to cache in main thread (dict for batch upsert)
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(fetch_single, lead) for lead in uncached_leads]
+        futures = [executor.submit(fetch_single, lead, prefetched_token, prefetched_domain) for lead in uncached_leads]
         for future in as_completed(futures):
             try:
                 lead_id, history = future.result()
                 if history is not None:
                     result[lead_id] = history
+                    # Prepare cache data (convert datetime to ISO string)
+                    cache_data = []
+                    for t in history:
+                        cache_data.append({
+                            "from_stage": t["from_stage"],
+                            "to_stage": t["to_stage"],
+                            "changed_at": t["changed_at"].isoformat() if t["changed_at"] else None,
+                        })
+                    to_cache[lead_id] = cache_data
             except Exception as e:
                 logger.error("Error in concurrent stage history fetch: %s", e)
+
+    # Batch cache all results in a single request (much faster than individual writes)
+    if to_cache:
+        set_cached_stage_histories_batch(to_cache)
 
     logger.info("Batch fetch complete: %d total stage histories", len(result))
     return result
 
 
-def _fetch_stage_history_from_api(lead_id: str, current_stage: str = None) -> list[dict] | None:
+def _fetch_stage_history_from_api(
+    lead_id: str,
+    current_stage: str = None,
+    skip_cache: bool = False,
+    _prefetched_token: str = None,
+    _api_domain: str = None,
+) -> list[dict] | None:
     """
     Internal function to fetch stage history directly from Zoho API.
 
     This bypasses cache checks and is used by batch fetching.
-    Results are still cached after fetching.
+    Results are cached after fetching unless skip_cache=True.
 
     Args:
         lead_id: The Zoho CRM lead ID
         current_stage: The lead's current stage (for synthetic entry if needed)
+        skip_cache: If True, don't cache results (used when called from worker threads)
+        _prefetched_token: Pre-fetched access token (avoids st.session_state in threads)
+        _api_domain: Pre-fetched API domain (avoids st.secrets in threads)
 
     Returns:
         List of stage transitions or None on error
     """
     logger.info("Fetching stage history for lead %s from API", lead_id)
 
-    url = f"{get_api_domain()}/crm/v5/Locatings/{lead_id}/__timeline"
+    api_domain = _api_domain or get_api_domain()
+    url = f"{api_domain}/crm/v5/Locatings/{lead_id}/__timeline"
     params = {"per_page": 100}
 
     try:
-        response = _make_request("GET", url, params=params)
+        response = _make_request("GET", url, params=params, _prefetched_token=_prefetched_token)
         if response is None:
             logger.warning("Failed to fetch stage history for lead %s", lead_id)
             return None
@@ -940,15 +995,16 @@ def _fetch_stage_history_from_api(lead_id: str, current_stage: str = None) -> li
                     "changed_at": datetime.now(timezone.utc),
                 })
 
-        # Cache the result
-        cache_data = []
-        for t in stage_transitions:
-            cache_data.append({
-                "from_stage": t["from_stage"],
-                "to_stage": t["to_stage"],
-                "changed_at": t["changed_at"].isoformat() if t["changed_at"] else None,
-            })
-        set_cached_stage_history(lead_id, cache_data)
+        # Cache the result (unless called from worker thread)
+        if not skip_cache:
+            cache_data = []
+            for t in stage_transitions:
+                cache_data.append({
+                    "from_stage": t["from_stage"],
+                    "to_stage": t["to_stage"],
+                    "changed_at": t["changed_at"].isoformat() if t["changed_at"] else None,
+                })
+            set_cached_stage_history(lead_id, cache_data)
 
         return stage_transitions
 
@@ -993,6 +1049,14 @@ def get_notes_for_leads(lead_ids: list[str]) -> dict[str, dict]:
 
     logger.info("Fetching notes for %d uncached leads", len(uncached_ids))
 
+    # Pre-fetch credentials in main thread to avoid Streamlit context issues in workers
+    prefetched_token = get_access_token()
+    prefetched_domain = get_api_domain()
+
+    if not prefetched_token:
+        logger.error("Cannot fetch notes: no access token")
+        return cached_notes
+
     # Fetch notes from API for uncached leads - use concurrent requests for speed
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1002,7 +1066,7 @@ def get_notes_for_leads(lead_ids: list[str]) -> dict[str, dict]:
     # Use thread pool for concurrent API calls (max 10 concurrent to avoid rate limits)
     with ThreadPoolExecutor(max_workers=10) as executor:
         future_to_lead = {
-            executor.submit(_fetch_latest_note_for_lead, lead_id): lead_id
+            executor.submit(_fetch_latest_note_for_lead, lead_id, prefetched_token, prefetched_domain): lead_id
             for lead_id in uncached_ids
         }
         for future in as_completed(future_to_lead):
@@ -1030,21 +1094,32 @@ def get_notes_for_leads(lead_ids: list[str]) -> dict[str, dict]:
     return all_notes
 
 
-def _fetch_latest_note_for_lead(lead_id: str) -> dict | None:
+def _fetch_latest_note_for_lead(
+    lead_id: str,
+    _prefetched_token: str = None,
+    _api_domain: str = None,
+) -> dict | None:
     """
     Fetch the most recent note for a single lead from Zoho CRM API.
 
     Args:
         lead_id: The Zoho lead ID
+        _prefetched_token: Pre-fetched access token (for worker threads)
+        _api_domain: Pre-fetched API domain (for worker threads)
 
     Returns:
         Dict with 'content' and 'time' keys, or None if no notes or error.
     """
     # Use v2 API - v8 requires 'fields' parameter for Related Notes endpoint
-    url = f"{get_api_domain()}/crm/v2/Locatings/{lead_id}/Notes"
+    api_domain = _api_domain or get_api_domain()
+    url = f"{api_domain}/crm/v2/Locatings/{lead_id}/Notes"
 
     try:
-        response = _make_request("GET", url, params={"per_page": 1, "sort_by": "Modified_Time", "sort_order": "desc"})
+        response = _make_request(
+            "GET", url,
+            params={"per_page": 1, "sort_by": "Modified_Time", "sort_order": "desc"},
+            _prefetched_token=_prefetched_token,
+        )
         if response is None:
             return None
 
