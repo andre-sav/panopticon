@@ -587,21 +587,44 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
     # Determine which rows to show
     visible_data = table_data if (total_count <= max_visible or st.session_state.at_risk_expanded) else table_data[:max_visible]
 
-    # Render as HTML table with clickable lead names
-    html_rows = []
-    for row in visible_data:
-        lead_id = _escape_html(row["id"])
-        lead_name = _escape_html(row["Lead"])
-        lead_cell = f'<a href="#lead-{lead_id}" style="color: #1a73e8; text-decoration: none;">{lead_name}</a>'
-        appt_date = _escape_html(row["Appt Date"])
-        days = _escape_html(row["Days Until"])
-        locator = _escape_html(row["Locator"])
-        zoho_url = row.get("zoho_url", "")
-        zoho_cell = f'<a href="{zoho_url}" target="_blank" style="color: #1a73e8; text-decoration: none;">{lead_id}</a>' if zoho_url else "—"
-        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 35%;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee; width: 12%;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee; width: 10%;">{days}</td><td style="padding: 8px; border-bottom: 1px solid #eee; width: 18%;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; width: 25%;">{zoho_cell}</td></tr>')
+    # Render table with Streamlit columns for clickable lead names
+    # Header row
+    st.markdown("""
+        <div style="display: flex; background: #f8f9fa; padding: 8px 0; border-bottom: 2px solid #dee2e6; font-weight: 600; font-size: 0.9rem;">
+            <div style="width: 35%; padding: 0 8px;">Lead</div>
+            <div style="width: 15%; padding: 0 8px;">Appt Date</div>
+            <div style="width: 12%; padding: 0 8px;">Days Until</div>
+            <div style="width: 20%; padding: 0 8px;">Locator</div>
+            <div style="width: 18%; padding: 0 8px;">Zoho</div>
+        </div>
+    """, unsafe_allow_html=True)
 
-    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem; table-layout: fixed;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6; width: 35%;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6; width: 12%;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6; width: 10%;">Days Until</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6; width: 18%;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6; width: 25%;">Zoho</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
-    st.markdown(html_table, unsafe_allow_html=True)
+    # Data rows with clickable buttons
+    for row in visible_data:
+        lead_id = row["id"]
+        lead_name = row["Lead"]
+        cols = st.columns([35, 15, 12, 20, 18])
+
+        with cols[0]:
+            if st.button(lead_name, key=f"at_risk_lead_{lead_id}", type="tertiary"):
+                st.session_state.scroll_to_lead = lead_id
+                st.rerun()
+
+        with cols[1]:
+            st.markdown(f"<div style='padding: 8px 0; font-size: 0.9rem;'>{_escape_html(row['Appt Date'])}</div>", unsafe_allow_html=True)
+
+        with cols[2]:
+            st.markdown(f"<div style='padding: 8px 0; font-size: 0.9rem;'>{_escape_html(row['Days Until'])}</div>", unsafe_allow_html=True)
+
+        with cols[3]:
+            st.markdown(f"<div style='padding: 8px 0; font-size: 0.9rem;'>{_escape_html(row['Locator'])}</div>", unsafe_allow_html=True)
+
+        with cols[4]:
+            zoho_url = row.get("zoho_url", "")
+            if zoho_url:
+                st.markdown(f"<a href='{zoho_url}' target='_blank' style='color: #1a73e8; text-decoration: none; font-size: 0.9rem;'>{_escape_html(lead_id)}</a>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='padding: 8px 0; font-size: 0.9rem;'>—</div>", unsafe_allow_html=True)
 
     # Show expand/collapse button if needed
     if total_count > max_visible:
@@ -680,21 +703,44 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
     # Determine which rows to show
     visible_data = table_data if (total_count <= max_visible or st.session_state.needs_attention_expanded) else table_data[:max_visible]
 
-    # Render as HTML table with clickable lead names
-    html_rows = []
-    for row in visible_data:
-        lead_id = _escape_html(row["id"])
-        lead_name = _escape_html(row["Lead"])
-        lead_cell = f'<a href="#lead-{lead_id}" style="color: #1a73e8; text-decoration: none;">{lead_name}</a>'
-        appt_date = _escape_html(row["Appt Date"])
-        days = _escape_html(row["Days Since"])
-        locator = _escape_html(row["Locator"])
-        zoho_url = row["zoho_url"]
-        zoho_cell = f'<a href="{zoho_url}" target="_blank" style="color: #1a73e8; text-decoration: none;">{lead_id}</a>' if zoho_url else "—"
-        html_rows.append(f'<tr><td style="padding: 8px; border-bottom: 1px solid #eee; width: 35%;">{lead_cell}</td><td style="padding: 8px; border-bottom: 1px solid #eee; width: 12%;">{appt_date}</td><td style="padding: 8px; border-bottom: 1px solid #eee; width: 10%;">{days}</td><td style="padding: 8px; border-bottom: 1px solid #eee; width: 18%;">{locator}</td><td style="padding: 8px; border-bottom: 1px solid #eee; width: 25%;">{zoho_cell}</td></tr>')
+    # Render table with Streamlit columns for clickable lead names
+    # Header row
+    st.markdown("""
+        <div style="display: flex; background: #f8f9fa; padding: 8px 0; border-bottom: 2px solid #dee2e6; font-weight: 600; font-size: 0.9rem;">
+            <div style="width: 35%; padding: 0 8px;">Lead</div>
+            <div style="width: 15%; padding: 0 8px;">Appt Date</div>
+            <div style="width: 12%; padding: 0 8px;">Days Since</div>
+            <div style="width: 20%; padding: 0 8px;">Locator</div>
+            <div style="width: 18%; padding: 0 8px;">Zoho</div>
+        </div>
+    """, unsafe_allow_html=True)
 
-    html_table = f'<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem; table-layout: fixed;"><thead><tr style="background: #f8f9fa; text-align: left;"><th style="padding: 8px; border-bottom: 2px solid #dee2e6; width: 35%;">Lead</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6; width: 12%;">Appt Date</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6; width: 10%;">Days Since</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6; width: 18%;">Locator</th><th style="padding: 8px; border-bottom: 2px solid #dee2e6; width: 25%;">Zoho</th></tr></thead><tbody>{"".join(html_rows)}</tbody></table>'
-    st.markdown(html_table, unsafe_allow_html=True)
+    # Data rows with clickable buttons
+    for row in visible_data:
+        lead_id = row["id"]
+        lead_name = row["Lead"]
+        cols = st.columns([35, 15, 12, 20, 18])
+
+        with cols[0]:
+            if st.button(lead_name, key=f"needs_attn_lead_{lead_id}", type="tertiary"):
+                st.session_state.scroll_to_lead = lead_id
+                st.rerun()
+
+        with cols[1]:
+            st.markdown(f"<div style='padding: 8px 0; font-size: 0.9rem;'>{_escape_html(row['Appt Date'])}</div>", unsafe_allow_html=True)
+
+        with cols[2]:
+            st.markdown(f"<div style='padding: 8px 0; font-size: 0.9rem;'>{_escape_html(row['Days Since'])}</div>", unsafe_allow_html=True)
+
+        with cols[3]:
+            st.markdown(f"<div style='padding: 8px 0; font-size: 0.9rem;'>{_escape_html(row['Locator'])}</div>", unsafe_allow_html=True)
+
+        with cols[4]:
+            zoho_url = row.get("zoho_url", "")
+            if zoho_url:
+                st.markdown(f"<a href='{zoho_url}' target='_blank' style='color: #1a73e8; text-decoration: none; font-size: 0.9rem;'>{_escape_html(lead_id)}</a>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='padding: 8px 0; font-size: 0.9rem;'>—</div>", unsafe_allow_html=True)
 
     # Show expand/collapse button if needed
     if total_count > max_visible:
