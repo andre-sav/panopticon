@@ -282,6 +282,15 @@ def initialize_filter_and_sort_state():
         st.session_state.sort_option = DEFAULT_SORT
 
 
+def _reset_all_filters():
+    """Callback to reset all filters to defaults. Must be called via on_click."""
+    st.session_state.filter_stage = ALL_STAGES
+    st.session_state.filter_locator = ALL_LOCATORS
+    st.session_state.filter_date_range = DEFAULT_DATE_RANGE
+    st.session_state.filter_status = ALL_STATUSES
+    st.session_state.sort_option = DEFAULT_SORT
+
+
 def display_filters(display_data: list[dict]):
     """Display filter controls in a collapsible section.
 
@@ -360,13 +369,11 @@ def display_filters(display_data: list[dict]):
             )
 
         if filters_active:
-            if st.button("Reset All Filters", use_container_width=True):
-                st.session_state.filter_stage = ALL_STAGES
-                st.session_state.filter_locator = ALL_LOCATORS
-                st.session_state.filter_date_range = DEFAULT_DATE_RANGE
-                st.session_state.filter_status = ALL_STATUSES
-                st.session_state.sort_option = DEFAULT_SORT
-                st.rerun()
+            st.button(
+                "Reset All Filters",
+                use_container_width=True,
+                on_click=_reset_all_filters,
+            )
 
     # Apply filters
     filtered_data = apply_filters(
