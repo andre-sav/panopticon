@@ -794,6 +794,172 @@ def get_stage_history(lead_id: str, current_stage: str = None) -> list[dict] | N
         return None  # Processing error
 
 
+def get_stage_histories_batch(leads: list[dict]) -> dict[str, list]:
+    """
+    Fetch stage history for multiple leads concurrently.
+
+    Uses Supabase cache for leads that are cached. For uncached leads,
+    fetches from Zoho Timeline API using concurrent requests for performance.
+
+    Args:
+        leads: List of lead dicts with 'id' and 'Stage' keys
+
+    Returns:
+        Dict mapping lead_id to stage history list.
+        Missing/error leads are not included in the result.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from src.cache import get_cached_stage_histories_batch
+
+    if not leads:
+        return {}
+
+    lead_ids = [lead.get("id") for lead in leads if lead.get("id")]
+    leads_by_id = {lead.get("id"): lead for lead in leads if lead.get("id")}
+
+    if not lead_ids:
+        return {}
+
+    # Batch fetch from cache first
+    cached = get_cached_stage_histories_batch(lead_ids)
+    result = {}
+    uncached_leads = []
+
+    for lead_id in lead_ids:
+        if lead_id in cached:
+            history = cached[lead_id]
+            lead = leads_by_id.get(lead_id)
+            current_stage = lead.get("Stage") if lead else None
+
+            # Smart invalidation: check if cache matches current stage
+            if current_stage and history:
+                last_cached_stage = history[-1].get("to_stage") if history else None
+                if last_cached_stage and last_cached_stage != current_stage:
+                    # Cache is stale, need to refetch
+                    uncached_leads.append(lead)
+                    continue
+
+            # Convert datetime strings to datetime objects
+            for transition in history:
+                if isinstance(transition.get("changed_at"), str):
+                    transition["changed_at"] = parse_zoho_date(transition["changed_at"])
+
+            result[lead_id] = history
+        else:
+            lead = leads_by_id.get(lead_id)
+            if lead:
+                uncached_leads.append(lead)
+
+    if not uncached_leads:
+        logger.debug("All %d stage histories served from cache", len(result))
+        return result
+
+    logger.info("Fetching stage history for %d uncached leads concurrently", len(uncached_leads))
+
+    # Fetch uncached leads concurrently (max 10 concurrent to avoid rate limits)
+    def fetch_single(lead):
+        lead_id = lead.get("id")
+        current_stage = lead.get("Stage")
+        # Use internal fetch logic without cache check (we already checked)
+        return lead_id, _fetch_stage_history_from_api(lead_id, current_stage)
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(fetch_single, lead) for lead in uncached_leads]
+        for future in as_completed(futures):
+            try:
+                lead_id, history = future.result()
+                if history is not None:
+                    result[lead_id] = history
+            except Exception as e:
+                logger.error("Error in concurrent stage history fetch: %s", e)
+
+    logger.info("Batch fetch complete: %d total stage histories", len(result))
+    return result
+
+
+def _fetch_stage_history_from_api(lead_id: str, current_stage: str = None) -> list[dict] | None:
+    """
+    Internal function to fetch stage history directly from Zoho API.
+
+    This bypasses cache checks and is used by batch fetching.
+    Results are still cached after fetching.
+
+    Args:
+        lead_id: The Zoho CRM lead ID
+        current_stage: The lead's current stage (for synthetic entry if needed)
+
+    Returns:
+        List of stage transitions or None on error
+    """
+    logger.info("Fetching stage history for lead %s from API", lead_id)
+
+    url = f"{get_api_domain()}/crm/v5/Locatings/{lead_id}/__timeline"
+    params = {"per_page": 100}
+
+    try:
+        response = _make_request("GET", url, params=params)
+        if response is None:
+            logger.warning("Failed to fetch stage history for lead %s", lead_id)
+            return None
+
+        data = response.json()
+        timeline_events = data.get("__timeline", [])
+
+        stage_transitions = []
+        for event in timeline_events:
+            field_history = event.get("field_history") or []
+            for field_change in field_history:
+                if field_change.get("api_name") == "Stage":
+                    audited_time = event.get("audited_time")
+                    changed_at = parse_zoho_date(audited_time)
+                    value_obj = field_change.get("_value", {})
+                    transition = {
+                        "from_stage": value_obj.get("old"),
+                        "to_stage": value_obj.get("new"),
+                        "changed_at": changed_at,
+                    }
+                    stage_transitions.append(transition)
+
+        stage_transitions.sort(
+            key=lambda x: x["changed_at"] if x["changed_at"] else datetime.min.replace(tzinfo=timezone.utc)
+        )
+
+        logger.info("Found %d stage transitions for lead %s", len(stage_transitions), lead_id)
+
+        # Add synthetic entry if needed
+        if current_stage and stage_transitions:
+            last_to_stage = stage_transitions[-1].get("to_stage")
+            if last_to_stage and last_to_stage != current_stage:
+                logger.info(
+                    "Adding synthetic transition for lead %s: '%s' -> '%s' (timeline gap)",
+                    lead_id, last_to_stage, current_stage
+                )
+                stage_transitions.append({
+                    "from_stage": last_to_stage,
+                    "to_stage": current_stage,
+                    "changed_at": datetime.now(timezone.utc),
+                })
+
+        # Cache the result
+        cache_data = []
+        for t in stage_transitions:
+            cache_data.append({
+                "from_stage": t["from_stage"],
+                "to_stage": t["to_stage"],
+                "changed_at": t["changed_at"].isoformat() if t["changed_at"] else None,
+            })
+        set_cached_stage_history(lead_id, cache_data)
+
+        return stage_transitions
+
+    except JSONDecodeError:
+        logger.error("Invalid JSON response from Zoho CRM timeline API")
+        return None
+    except (KeyError, TypeError, AttributeError) as e:
+        logger.error("Error processing stage history: %s", type(e).__name__)
+        return None
+
+
 def get_notes_for_leads(lead_ids: list[str]) -> dict[str, dict]:
     """
     Fetch the most recent note for multiple leads from Zoho CRM.

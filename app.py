@@ -1368,19 +1368,19 @@ def display_stage_history(lead: dict):
 
 
 def _prefetch_stage_histories(leads: list[dict]):
-    """Prefetch stage histories from Supabase cache in a single batch query.
+    """Prefetch stage histories with concurrent API fetching for uncached leads.
 
-    This dramatically reduces database queries by fetching all cached stage
-    histories at once instead of one query per lead card expansion.
+    Uses batch Supabase cache query AND concurrent Zoho API fetching for
+    any leads not in cache. This eliminates the N+1 query pattern.
 
     Results are stored in session state for use by display_stage_history().
 
     Args:
         leads: List of formatted lead dictionaries with 'id' and 'Stage' fields
     """
-    from src.cache import get_cached_stage_histories_batch
+    from src.zoho_client import get_stage_histories_batch
 
-    # Get lead IDs that don't already have stage history in session state
+    # Get leads that don't already have stage history in session state
     leads_to_fetch = []
     for lead in leads:
         lead_id = lead.get("id")
@@ -1393,31 +1393,11 @@ def _prefetch_stage_histories(leads: list[dict]):
     if not leads_to_fetch:
         return
 
-    lead_ids = [lead.get("id") for lead in leads_to_fetch]
-    leads_by_id = {lead.get("id"): lead for lead in leads_to_fetch}
+    # Batch fetch: checks Supabase cache AND fetches uncached from API concurrently
+    histories = get_stage_histories_batch(leads_to_fetch)
 
-    # Single batch query to Supabase
-    cached = get_cached_stage_histories_batch(lead_ids)
-
-    # Process and store in session state
-    for lead_id, history in cached.items():
-        lead = leads_by_id.get(lead_id)
-        current_stage = lead.get("Stage") if lead else None
-
-        # Smart invalidation: skip if current stage doesn't match last cached stage
-        if current_stage and history:
-            last_cached_stage = history[-1].get("to_stage") if history else None
-            if last_cached_stage and last_cached_stage != current_stage:
-                # Cache is stale, skip - will fetch fresh from API when card expanded
-                continue
-
-        # Convert datetime strings
-        from src.zoho_client import parse_zoho_date
-        for transition in history:
-            if isinstance(transition.get("changed_at"), str):
-                transition["changed_at"] = parse_zoho_date(transition["changed_at"])
-
-        # Format and store in session state (same format as display_stage_history expects)
+    # Store results in session state
+    for lead_id, history in histories.items():
         cache_key = f"stage_history_{lead_id}"
         st.session_state[cache_key] = format_stage_history(history)
         st.session_state[f"stage_history_error_{lead_id}"] = False
