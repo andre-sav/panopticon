@@ -826,6 +826,120 @@ def format_stage_timestamp(dt: Optional[datetime]) -> str:
         return f"{date_str} at {time_str}"
 
 
+# --- Historical Status Trend Calculation ---
+
+def calculate_historical_status_trend(leads: list[dict], days: int = 30) -> list[dict]:
+    """
+    Calculate historical status counts by reconstructing what statuses would have been.
+
+    For each day in the past N days, calculates what status each lead would have had
+    based on their appointment date and current stage.
+
+    Args:
+        leads: List of formatted lead dictionaries (from format_leads_for_display)
+        days: Number of days of history to calculate (default 30)
+
+    Returns:
+        List of daily snapshots sorted by date ascending:
+        [
+            {
+                "date": "2025-12-15",
+                "date_label": "Dec 15",
+                "stale": 45,
+                "at_risk": 12,
+                "needs_attention": 8,
+                "healthy": 120,
+            },
+            ...
+        ]
+
+    Note:
+        - Uses current stage values (can't reconstruct stage history)
+        - Terminal stages are always healthy regardless of date
+        - "Green - Approved By Locator" uses current modification date
+    """
+    today = datetime.now(timezone.utc).date()
+    results = []
+
+    # Pre-process leads to extract appointment dates and stages
+    lead_data = []
+    for lead in leads:
+        days_value = lead.get("Days")
+        if days_value is None:
+            continue
+
+        # Calculate the actual appointment date
+        appt_date = today - timedelta(days=days_value)
+        stage = lead.get("Stage", "")
+
+        lead_data.append({
+            "appt_date": appt_date,
+            "stage": stage,
+            "stage_lower": stage.lower() if stage else "",
+        })
+
+    # Terminal stages - always healthy regardless of time
+    terminal_stages = (
+        "green/ delivered",
+        "delivery requested",
+        "red/ rejected",
+        "green/no operator",
+        "declined by operator",
+        "green - lll fulfilled",
+        "red/not viable",
+    )
+
+    # Calculate status counts for each day
+    for days_ago in range(days - 1, -1, -1):  # Start from oldest to newest
+        historical_date = today - timedelta(days=days_ago)
+        counts = {"stale": 0, "at_risk": 0, "needs_attention": 0, "healthy": 0}
+
+        for ld in lead_data:
+            # Calculate what "days since appointment" would have been on this historical date
+            days_since_on_date = (historical_date - ld["appt_date"]).days
+
+            # Skip leads with appointments after this historical date
+            if days_since_on_date < 0:
+                continue
+
+            # Determine status for this lead on this historical date
+            stage_lower = ld["stage_lower"]
+
+            # Terminal stages are always healthy
+            if stage_lower in terminal_stages:
+                counts["healthy"] += 1
+            # Green - Approved By Locator - simplified, treat as healthy
+            # (we can't accurately reconstruct modification dates historically)
+            elif stage_lower == "green - approved by locator":
+                counts["healthy"] += 1
+            # Standard staleness logic
+            elif days_since_on_date >= STALE_THRESHOLD_DAYS:
+                counts["stale"] += 1
+            elif stage_lower == "appt not acknowledged":
+                counts["at_risk"] += 1
+            elif days_since_on_date >= AT_RISK_THRESHOLD_DAYS:
+                counts["at_risk"] += 1
+            else:
+                counts["healthy"] += 1
+
+        # Format date label
+        if platform.system() == "Windows":
+            date_label = historical_date.strftime("%b %#d")
+        else:
+            date_label = historical_date.strftime("%b %-d")
+
+        results.append({
+            "date": historical_date.isoformat(),
+            "date_label": date_label,
+            "stale": counts["stale"],
+            "at_risk": counts["at_risk"],
+            "needs_attention": counts["needs_attention"],
+            "healthy": counts["healthy"],
+        })
+
+    return results
+
+
 # --- Closing Ratio Calculations ---
 
 # Stages that count as successful closes

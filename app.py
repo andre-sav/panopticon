@@ -42,6 +42,7 @@ from src.data_processing import (
     get_about_to_go_stale,
     get_closing_ratio_summary,
     get_closing_ratio_by_month,
+    calculate_historical_status_trend,
     apply_filters,
     get_unique_stages,
     get_unique_locators,
@@ -904,37 +905,37 @@ def display_appointments_timeline(display_data: list[dict]):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def display_status_trend():
+def display_status_trend(display_data: list[dict]):
     """Display line chart showing status counts over time.
 
-    Uses daily snapshots stored in Supabase to show trends.
+    Calculates historical status counts by reconstructing what statuses
+    would have been on each past day based on appointment dates.
+
+    Args:
+        display_data: List of formatted lead dictionaries
     """
-    from src.cache import get_status_snapshots
+    # Calculate historical trend from lead data
+    trend_data = calculate_historical_status_trend(display_data, days=30)
 
-    snapshots = get_status_snapshots(days=30)
-
-    if len(snapshots) < 2:
-        st.info("Trend data will appear after a few days of usage.")
+    if len(trend_data) < 2:
+        st.info("Not enough data for trend chart.")
         return
 
     # Prepare data for chart
-    dates = []
-    for s in snapshots:
-        dt = datetime.strptime(s["snapshot_date"], "%Y-%m-%d")
-        dates.append(dt.strftime("%b %-d") if platform.system() != "Windows" else dt.strftime("%b %#d"))
+    dates = [d["date_label"] for d in trend_data]
 
     fig = go.Figure()
 
     # Add lines for each status
     status_configs = [
-        ("stale_count", "Stale", "#dc3545"),
-        ("at_risk_count", "At Risk", "#ffc107"),
-        ("needs_attention_count", "Needs Attention", "#fd7e14"),
-        ("healthy_count", "Healthy", "#28a745"),
+        ("stale", "Stale", "#dc3545"),
+        ("at_risk", "At Risk", "#ffc107"),
+        ("needs_attention", "Needs Attention", "#fd7e14"),
+        ("healthy", "Healthy", "#28a745"),
     ]
 
     for field, label, color in status_configs:
-        values = [s.get(field, 0) for s in snapshots]
+        values = [d.get(field, 0) for d in trend_data]
         fig.add_trace(go.Scatter(
             name=label,
             x=dates,
@@ -1530,8 +1531,8 @@ def display_dashboard():
 
         st.divider()
 
-        # Display status trend over time
-        display_status_trend()
+        # Display status trend over time (uses all data, not filtered)
+        display_status_trend(display_data)
 
         # Display closing ratio (hide for short date ranges where data is insufficient)
         date_filter = st.session_state.get("filter_date_range", DEFAULT_DATE_RANGE)
