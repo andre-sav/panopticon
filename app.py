@@ -983,30 +983,30 @@ def display_closing_ratio(filtered_data: list[dict], all_data: list[dict]):
         filtered_data: Filtered leads list (for summary metric)
         all_data: Unfiltered leads list (for trend chart - always shows 6 months)
     """
-    # Header with tooltip
-    st.markdown("""
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 1rem;">
-            <h3 style="margin: 0;">Closing Ratio</h3>
-            <div style="position: relative; display: inline-block;">
-                <span style="cursor: help; color: #666; font-size: 1.1rem;" title="How this is calculated:
+    # Header with tooltip using expander for explanation
+    col_title, col_help = st.columns([6, 1])
+    with col_title:
+        st.markdown("### Closing Ratio")
+    with col_help:
+        with st.popover("ⓘ"):
+            st.markdown("""
+**How this is calculated:**
 
-SUCCESS stages:
-• Green/ Delivered
-• Delivery Requested
-• Green - LLL Fulfilled
+**SUCCESS stages:**
+- Green/ Delivered
+- Delivery Requested
+- Green - LLL Fulfilled
 
-FAILED stages:
-• Red/ Rejected
-• Declined by Operator
-• Red/Not Viable
+**FAILED stages:**
+- Red/ Rejected
+- Declined by Operator
+- Red/Not Viable
 
-EXCLUDED (not counted):
-• Green/No operator
+**EXCLUDED (not counted):**
+- Green/No operator
 
-Note: Leads are grouped by appointment date, not the date they reached their current stage. Recent closes from older appointments may not appear in short date filters.">ⓘ</span>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
+*Note: Leads are grouped by appointment date, not the date they reached their current stage. Recent closes from older appointments may not appear in short date filters.*
+            """)
 
     # Calculate summary from filtered data
     summary = get_closing_ratio_summary(filtered_data)
