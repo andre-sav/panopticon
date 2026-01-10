@@ -1485,6 +1485,17 @@ def _prefetch_notes(leads: list[dict]):
 LEADS_PER_PAGE = 50
 
 
+def _find_lead_page(leads: list[dict], lead_id: str) -> int:
+    """Find which page a lead is on given its ID.
+
+    Returns page number (0-indexed) or -1 if not found.
+    """
+    for idx, lead in enumerate(leads):
+        if lead.get("id") == lead_id:
+            return idx // LEADS_PER_PAGE
+    return -1
+
+
 def display_lead_cards(leads: list[dict]):
     """Display leads as expandable cards with detail views and pagination.
 
@@ -1499,6 +1510,21 @@ def display_lead_cards(leads: list[dict]):
     # Initialize pagination state
     if "leads_page" not in st.session_state:
         st.session_state.leads_page = 0
+
+    # Check for scroll target (set by JavaScript when clicking a lead link)
+    scroll_target = st.session_state.get("scroll_to_lead")
+    if scroll_target:
+        # Find which page the lead is on
+        target_page = _find_lead_page(leads, scroll_target)
+        if target_page >= 0:
+            st.session_state.leads_page = target_page
+        # Clear the scroll target after processing (will be re-added by JS for scroll)
+        # Keep it for one more render so JS can use it
+        if st.session_state.get("scroll_target_processed"):
+            del st.session_state.scroll_to_lead
+            del st.session_state.scroll_target_processed
+        else:
+            st.session_state.scroll_target_processed = True
 
     # Calculate pagination
     total_pages = max(1, (total_leads + LEADS_PER_PAGE - 1) // LEADS_PER_PAGE)
@@ -1719,22 +1745,34 @@ display_dashboard()
 
 # Add JavaScript for lead navigation (must be at end after all content rendered)
 import streamlit.components.v1 as components
-components.html("""
-<script>
-(function() {
-    const doc = window.parent.document;
 
-    // Find the scrollable container
-    const getScrollContainer = () => {
-        return doc.querySelector('[data-testid="stAppViewContainer"]') ||
-               doc.querySelector('.main') ||
-               doc.documentElement;
-    };
+# Check for scroll_to query param and set session state
+scroll_to_param = st.query_params.get("scroll_to")
+if scroll_to_param:
+    st.session_state.scroll_to_lead = scroll_to_param
+    # Clear the query param
+    st.query_params.clear()
+    st.rerun()
+
+# Get current scroll target for JS
+current_scroll_target = st.session_state.get("scroll_to_lead", "")
+
+components.html(f"""
+<script>
+(function() {{
+    const doc = window.parent.document;
+    const scrollTarget = "{current_scroll_target}";
 
     // Scroll to lead and expand
-    const scrollToLead = (leadId) => {
+    const scrollToLead = (leadId) => {{
         const anchor = doc.getElementById('lead-' + leadId);
-        if (!anchor) return;
+        if (!anchor) {{
+            // Lead not on current page - redirect with query param to navigate
+            const currentUrl = new URL(window.parent.location.href);
+            currentUrl.searchParams.set('scroll_to', leadId);
+            window.parent.location.href = currentUrl.toString();
+            return;
+        }}
 
         // Get lead name from data attribute
         const leadName = anchor.getAttribute('data-leadname');
@@ -1743,45 +1781,50 @@ components.html("""
         const allDetails = doc.querySelectorAll('details');
         let targetDetails = null;
 
-        for (const details of allDetails) {
+        for (const details of allDetails) {{
             const summary = details.querySelector('summary');
-            if (summary && leadName && summary.textContent.includes(leadName)) {
+            if (summary && leadName && summary.textContent.includes(leadName)) {{
                 targetDetails = details;
                 break;
-            }
-        }
+            }}
+        }}
 
-        if (targetDetails && !targetDetails.open) {
+        if (targetDetails && !targetDetails.open) {{
             const summary = targetDetails.querySelector('summary');
-            if (summary) {
+            if (summary) {{
                 summary.click();
-            }
-        }
+            }}
+        }}
 
         // After expanding, scroll to show the card with padding at top
-        setTimeout(() => {
+        setTimeout(() => {{
             const target = targetDetails || anchor;
-            target.scrollIntoView({behavior: 'smooth', block: 'start'});
+            target.scrollIntoView({{behavior: 'smooth', block: 'start'}});
             // Add more padding after scroll completes
-            setTimeout(() => {
-                window.parent.scrollBy({top: -120, behavior: 'smooth'});
-            }, 400);
-        }, 200);
-    };
+            setTimeout(() => {{
+                window.parent.scrollBy({{top: -120, behavior: 'smooth'}});
+            }}, 400);
+        }}, 200);
+    }};
 
     // Handle clicks on lead links
-    const handleClick = (e) => {
+    const handleClick = (e) => {{
         const link = e.target.closest('a[href^="#lead-"]');
-        if (link) {
+        if (link) {{
             e.preventDefault();
             e.stopPropagation();
             const leadId = link.getAttribute('href').replace('#lead-', '');
             scrollToLead(leadId);
-        }
-    };
+        }}
+    }};
 
     // Attach listener to parent document
     doc.addEventListener('click', handleClick, true);
-})();
+
+    // If we have a scroll target from Python, scroll to it on load
+    if (scrollTarget) {{
+        setTimeout(() => scrollToLead(scrollTarget), 500);
+    }}
+}})();
 </script>
 """, height=0)
