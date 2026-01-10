@@ -967,8 +967,8 @@ def display_status_trend(display_data: list[dict]):
     Args:
         display_data: List of formatted lead dictionaries
     """
-    # Calculate historical trend from lead data (weekly snapshots)
-    trend_data = calculate_historical_status_trend(display_data, weeks=4)
+    # Calculate historical trend from lead data (weekly snapshots over 90 days)
+    trend_data = calculate_historical_status_trend(display_data, weeks=13)
 
     if len(trend_data) < 2:
         st.info("Not enough data for trend chart.")
@@ -1010,7 +1010,7 @@ def display_status_trend(display_data: list[dict]):
         y_max = min(100, mid + 5)
 
     fig.update_layout(
-        title_text="Health Rate Trend (Last 4 Weeks)",
+        title_text="Health Rate Trend (Last 90 Days)",
         xaxis_title="",
         yaxis_title="% Healthy",
         yaxis=dict(
