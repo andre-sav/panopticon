@@ -10,6 +10,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from streamlit_scroll_to_top import scroll_to_here
 
 # Configure logging
 logging.basicConfig(
@@ -160,6 +161,11 @@ st.markdown("""
 # Header - more compact
 st.markdown("# 👁️ Panopticon")
 st.caption("Lead Follow-up Management Dashboard")
+
+# Scroll-to-top target and trigger
+if st.session_state.get("scroll_to_top", False):
+    scroll_to_here(0, key="scroll_top")
+    st.session_state.scroll_to_top = False
 
 # Handle scroll-to-lead query param (from clicking lead links with pagination)
 _scroll_to_param = st.query_params.get("scroll_to")
@@ -1313,16 +1319,12 @@ def display_lead_detail(lead: dict):
     st.divider()
     display_stage_history(lead)
 
-    # Back to top button (pure JS - no rerun needed)
-    st.markdown(
-        '''<div style="text-align: right; margin-top: 0.5rem;">
-            <button onclick="window.parent.document.querySelector('section.main').scrollTo({top: 0, behavior: 'smooth'})"
-                style="background: #f0f2f6; border: 1px solid #ddd; border-radius: 4px; padding: 0.4rem 1rem; cursor: pointer; font-size: 0.9rem;">
-                ↑ Back to top
-            </button>
-        </div>''',
-        unsafe_allow_html=True
-    )
+    # Back to top button
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col3:
+        if st.button("↑ Back to top", key=f"back_top_{lead.get('id', '')}", use_container_width=True):
+            st.session_state.scroll_to_top = True
+            st.rerun()
 
 
 def display_stage_history(lead: dict):
