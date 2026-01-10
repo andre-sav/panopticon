@@ -826,6 +826,160 @@ def format_stage_timestamp(dt: Optional[datetime]) -> str:
         return f"{date_str} at {time_str}"
 
 
+# --- Closing Ratio Calculations ---
+
+# Stages that count as successful closes
+SUCCESSFUL_CLOSE_STAGES = frozenset([
+    "green/ delivered",
+    "delivery requested",
+    "green - lll fulfilled",
+])
+
+# Stages that count as failed closes
+FAILED_CLOSE_STAGES = frozenset([
+    "red/ rejected",
+    "declined by operator",
+    "red/not viable",
+])
+
+# Stages that are excluded from ratio (neutral outcome - no opportunity existed)
+EXCLUDED_STAGES = frozenset([
+    "green/no operator",
+])
+
+
+def get_closing_ratio_summary(leads: list[dict]) -> dict:
+    """
+    Calculate closing ratio summary from leads.
+
+    Only includes leads that have reached a terminal stage (success or failure).
+    Excludes "Green/No operator" as it represents no opportunity existing.
+
+    Args:
+        leads: List of formatted lead dictionaries (from format_leads_for_display)
+
+    Returns:
+        Dictionary with:
+        - ratio: Closing ratio as percentage (0-100), or None if no completed leads
+        - successful: Count of successfully closed leads
+        - failed: Count of failed leads
+        - total_completed: Total leads that reached terminal stage (successful + failed)
+        - active: Count of leads still in progress
+    """
+    successful = 0
+    failed = 0
+    active = 0
+
+    for lead in leads:
+        stage = lead.get("Stage", "")
+        stage_lower = stage.lower() if stage else ""
+
+        if stage_lower in SUCCESSFUL_CLOSE_STAGES:
+            successful += 1
+        elif stage_lower in FAILED_CLOSE_STAGES:
+            failed += 1
+        elif stage_lower not in EXCLUDED_STAGES:
+            # Not a terminal stage and not excluded - still active
+            active += 1
+
+    total_completed = successful + failed
+    ratio = (successful / total_completed * 100) if total_completed > 0 else None
+
+    return {
+        "ratio": ratio,
+        "successful": successful,
+        "failed": failed,
+        "total_completed": total_completed,
+        "active": active,
+    }
+
+
+def get_closing_ratio_by_month(leads: list[dict], months: int = 6) -> list[dict]:
+    """
+    Calculate closing ratio by monthly cohort based on appointment date.
+
+    Groups leads by the month of their appointment, then calculates the
+    closing ratio for each cohort. Only includes leads with terminal stages.
+
+    Args:
+        leads: List of formatted lead dictionaries (from format_leads_for_display)
+        months: Number of months of history to include (default 6)
+
+    Returns:
+        List of monthly cohort dictionaries sorted by month ascending:
+        [
+            {
+                "month": "2025-10",
+                "month_label": "Oct 2025",
+                "successful": 35,
+                "failed": 12,
+                "active": 3,
+                "total_completed": 47,
+                "ratio": 74.5,
+            },
+            ...
+        ]
+    """
+    from collections import defaultdict
+    from datetime import datetime, timedelta
+
+    # Calculate cutoff date
+    today = datetime.now(timezone.utc).date()
+    cutoff_date = today - timedelta(days=months * 30)
+
+    # Group leads by month
+    monthly_data = defaultdict(lambda: {"successful": 0, "failed": 0, "active": 0})
+
+    for lead in leads:
+        days = lead.get("Days")
+        if days is None:
+            continue
+
+        # Calculate appointment date from days since
+        appt_date = today - timedelta(days=days)
+
+        # Skip if before cutoff
+        if appt_date < cutoff_date:
+            continue
+
+        # Get month key (YYYY-MM format for sorting)
+        month_key = appt_date.strftime("%Y-%m")
+
+        # Categorize by stage
+        stage = lead.get("Stage", "")
+        stage_lower = stage.lower() if stage else ""
+
+        if stage_lower in SUCCESSFUL_CLOSE_STAGES:
+            monthly_data[month_key]["successful"] += 1
+        elif stage_lower in FAILED_CLOSE_STAGES:
+            monthly_data[month_key]["failed"] += 1
+        elif stage_lower not in EXCLUDED_STAGES:
+            monthly_data[month_key]["active"] += 1
+
+    # Convert to sorted list with calculated ratios
+    result = []
+    for month_key in sorted(monthly_data.keys()):
+        data = monthly_data[month_key]
+        total_completed = data["successful"] + data["failed"]
+        ratio = (data["successful"] / total_completed * 100) if total_completed > 0 else None
+
+        # Parse month for label
+        dt = datetime.strptime(month_key, "%Y-%m")
+        month_label = dt.strftime("%b %Y")
+
+        result.append({
+            "month": month_key,
+            "month_label": month_label,
+            "successful": data["successful"],
+            "failed": data["failed"],
+            "active": data["active"],
+            "total_completed": total_completed,
+            "ratio": ratio,
+        })
+
+    return result
+
+
 def format_stage_history(transitions: list[dict]) -> list[dict]:
     """
     Format stage transition history for display.

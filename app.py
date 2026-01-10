@@ -40,6 +40,8 @@ from src.data_processing import (
     count_leads_by_stage,
     get_locator_workload,
     get_about_to_go_stale,
+    get_closing_ratio_summary,
+    get_closing_ratio_by_month,
     apply_filters,
     get_unique_stages,
     get_unique_locators,
@@ -970,6 +972,131 @@ def display_status_trend():
     st.plotly_chart(fig, use_container_width=True)
 
 
+def display_closing_ratio(filtered_data: list[dict], all_data: list[dict]):
+    """Display closing ratio summary metric and monthly trend chart.
+
+    Shows:
+    - Summary metric: Overall closing ratio for filtered leads
+    - Trend chart: Monthly closing ratios for last 6 months (always full history)
+
+    Args:
+        filtered_data: Filtered leads list (for summary metric)
+        all_data: Unfiltered leads list (for trend chart - always shows 6 months)
+    """
+    st.markdown("### Closing Ratio")
+
+    # Calculate summary from filtered data
+    summary = get_closing_ratio_summary(filtered_data)
+
+    # Calculate monthly data from ALL data (always show 6 months history)
+    monthly_data = get_closing_ratio_by_month(all_data, months=6)
+
+    # Layout: Summary metric on left, trend chart on right
+    metric_col, chart_col = st.columns([1, 2])
+
+    with metric_col:
+        if summary["ratio"] is not None:
+            ratio_display = f"{summary['ratio']:.1f}%"
+            # Color based on ratio
+            if summary["ratio"] >= 70:
+                color = "#28a745"  # Green
+                bg_color = "#e8f5e9"
+            elif summary["ratio"] >= 50:
+                color = "#ffc107"  # Yellow
+                bg_color = "#fff8e6"
+            else:
+                color = "#dc3545"  # Red
+                bg_color = "#ffeaea"
+
+            st.markdown(f"""
+                <div style="background: {bg_color}; padding: 1.5rem; border-radius: 12px;
+                            text-align: center; border-left: 4px solid {color};">
+                    <div style="font-size: 3rem; font-weight: 700; color: {color}; line-height: 1;">
+                        {ratio_display}
+                    </div>
+                    <div style="font-size: 0.9rem; color: #666; margin-top: 0.5rem;">
+                        Closing Ratio
+                    </div>
+                    <div style="font-size: 0.8rem; color: #888; margin-top: 0.25rem;">
+                        {summary['successful']} successful / {summary['total_completed']} completed
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+                <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 12px;
+                            text-align: center; border-left: 4px solid #6c757d;">
+                    <div style="font-size: 2rem; font-weight: 700; color: #6c757d; line-height: 1;">
+                        —
+                    </div>
+                    <div style="font-size: 0.9rem; color: #666; margin-top: 0.5rem;">
+                        Closing Ratio
+                    </div>
+                    <div style="font-size: 0.8rem; color: #888; margin-top: 0.25rem;">
+                        No completed leads yet
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+
+        # Show breakdown below metric
+        st.markdown(f"""
+            <div style="margin-top: 1rem; font-size: 0.85rem; color: #666;">
+                <div>✓ Successful: {summary['successful']}</div>
+                <div>✗ Failed: {summary['failed']}</div>
+                <div>◉ Still Active: {summary['active']}</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    with chart_col:
+        if not monthly_data:
+            st.info("Not enough data for trend chart")
+            return
+
+        # Filter to months that have completed leads for meaningful ratios
+        months_with_data = [m for m in monthly_data if m["ratio"] is not None]
+
+        if len(months_with_data) < 2:
+            st.info("Trend data will appear after more leads reach terminal stages")
+            return
+
+        # Build bar chart showing closing ratio by month
+        fig = go.Figure()
+
+        # Add bars for closing ratio
+        fig.add_trace(go.Bar(
+            name="Closing Ratio",
+            x=[m["month_label"] for m in months_with_data],
+            y=[m["ratio"] for m in months_with_data],
+            marker_color="#1a73e8",
+            text=[f"{m['ratio']:.0f}%" for m in months_with_data],
+            textposition="outside",
+            hovertemplate="<b>%{x}</b><br>Ratio: %{y:.1f}%<br>Completed: %{customdata}<extra></extra>",
+            customdata=[m["total_completed"] for m in months_with_data],
+        ))
+
+        # Add a reference line at overall average
+        if summary["ratio"] is not None:
+            fig.add_hline(
+                y=summary["ratio"],
+                line_dash="dash",
+                line_color="#888",
+                annotation_text=f"Avg: {summary['ratio']:.0f}%",
+                annotation_position="right",
+            )
+
+        fig.update_layout(
+            title_text="Monthly Closing Ratio Trend",
+            xaxis_title="",
+            yaxis_title="Closing Ratio (%)",
+            yaxis=dict(range=[0, 105]),  # 0-100% with room for labels
+            showlegend=False,
+            margin=dict(t=40, b=40, l=40, r=60),
+            height=300,
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+
 def display_lead_detail(lead: dict):
     """Display detailed information for a single lead (Stories 4.1, 4.2).
 
@@ -1390,6 +1517,12 @@ def display_dashboard():
 
         # Display status trend over time
         display_status_trend()
+
+        # Display closing ratio (hide for short date ranges where data is insufficient)
+        date_filter = st.session_state.get("filter_date_range", DEFAULT_DATE_RANGE)
+        if date_filter not in ("Last 7 Days + Future", "Future"):
+            st.divider()
+            display_closing_ratio(filtered_data, display_data)
 
         st.divider()
 
