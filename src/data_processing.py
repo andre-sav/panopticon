@@ -204,24 +204,40 @@ def has_been_acknowledged(stage_history: list[dict], current_stage: str) -> bool
     return False
 
 
-def has_progressed_from_unacknowledged(stage_history: list[dict]) -> bool:
+def is_in_later_stage(current_stage: str) -> bool:
     """
-    Check if a lead has progressed FROM the 'Appt Not Acknowledged' stage.
+    Check if the lead is in a stage that comes after 'APPT Acknowledged' in the pipeline.
 
-    This is more accurate than checking for a specific "APPT Acknowledged" stage,
-    since leads may skip that stage and go directly to other stages like
-    "Yellow/ Decision Pending".
+    This is used to detect "stage skipped" situations where procedure wasn't followed
+    but work is still being done.
 
     Args:
-        stage_history: List of stage transitions [{from_stage, to_stage, changed_at}]
+        current_stage: The lead's current stage
 
     Returns:
-        True if lead has moved forward from the unacknowledged stage, False otherwise
+        True if in a later stage, False otherwise
     """
-    for transition in stage_history or []:
-        from_stage = (transition.get("from_stage") or "").lower()
-        # Check if this transition moved FROM an unacknowledged stage
-        if "not acknowledged" in from_stage:
+    if not current_stage:
+        return False
+
+    stage_lower = current_stage.lower()
+
+    # Stages that come after acknowledgment
+    later_stages = (
+        "green - approved by locator",
+        "green - sitesurvey sent",
+        "green - lll approved",
+        "green - lll fulfilled",
+        "green/no-operator",
+        "green/no operator",
+        "delivery requested",
+        "green/delivered",
+        "green/ delivered",
+        "hlm follow up",
+    )
+
+    for stage in later_stages:
+        if stage in stage_lower:
             return True
 
     return False
@@ -247,12 +263,6 @@ def get_days_since_last_activity(
     if stage_history:
         for transition in stage_history:
             changed_at = transition.get("changed_at")
-            # Parse string dates (from cache) to datetime
-            if isinstance(changed_at, str):
-                try:
-                    changed_at = datetime.fromisoformat(changed_at.replace("Z", "+00:00"))
-                except ValueError:
-                    changed_at = None
             if isinstance(changed_at, datetime):
                 if last_activity is None or changed_at > last_activity:
                     last_activity = changed_at
@@ -409,22 +419,40 @@ def get_lead_status_v2(
         else:
             return ("healthy", "Actively worked - recent note added")
 
-    # 4. Check for no activity (Stale) - must come before other checks
+    # 4. Check acknowledgment status
+    acknowledged = has_been_acknowledged(stage_history, current_stage)
+
+    # 5. Check for stage skipped (in later stage but never acknowledged)
+    if not acknowledged and is_in_later_stage(current_stage):
+        return ("healthy", "Stage skipped - procedure not followed but being worked")
+
+    # 6. Check for no activity (Stale)
     days_since_activity = get_days_since_last_activity(stage_history, latest_note)
     if days_since_activity >= STALE_NO_ACTIVITY_DAYS:
         return ("stale", f"No activity for {days_since_activity} days")
 
-    # 5. Check if lead has progressed from "Appt Not Acknowledged"
-    progressed = has_progressed_from_unacknowledged(stage_history)
+    # 7. Never acknowledged - At Risk
+    if not acknowledged:
+        return ("at_risk", "Appointment has never been acknowledged")
 
-    # 6. Progressed but no notes - Needs Attention
-    # Someone moved the lead forward but didn't document with notes
-    if progressed:
-        return ("needs_attention", "Stage progressed but no notes added since appointment")
+    # 8. Acknowledged but stalled - Needs Attention
+    # Find when they were acknowledged
+    acknowledged_date = None
+    for transition in stage_history or []:
+        to_stage = (transition.get("to_stage") or "").lower()
+        if ACKNOWLEDGED_STAGE in to_stage:
+            acknowledged_date = transition.get("changed_at")
+            break
 
-    # 7. Never progressed from unacknowledged - At Risk
-    # Lead is still stuck in initial unacknowledged state
-    return ("at_risk", "Appointment has never been acknowledged")
+    if acknowledged_date:
+        if isinstance(acknowledged_date, datetime):
+            date_str = acknowledged_date.strftime("%b %d, %Y")
+            return ("needs_attention", f"Acknowledged on {date_str} but no progress since. No notes since appointment.")
+        else:
+            return ("needs_attention", "Acknowledged but no progress since. No notes since appointment.")
+
+    # 9. Default - acknowledged but stalled (no date found in history)
+    return ("needs_attention", "Acknowledged but stalled - no recent progress")
 
 
 # Centralized status configuration - single source of truth for emoji, color, and labels

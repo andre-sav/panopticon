@@ -597,7 +597,7 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
         <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 0.75rem 1rem;
                     border-radius: 0 4px 4px 0; margin-bottom: 0.5rem;">
             <strong>⚠️ {total_count} lead{'s' if total_count != 1 else ''} at risk</strong>
-            <span style="color: #856404;"> (Appointment not yet acknowledged)</span>
+            <span style="color: #856404;"> (Appointment unacknowledged by Locator)</span>
         </div>
     """, unsafe_allow_html=True)
 
@@ -661,7 +661,7 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
     st.markdown(f"""
         <div style="background: #fff3cd; border-left: 4px solid #fd7e14; padding: 0.75rem 1rem; margin-bottom: 0.5rem; border-radius: 0 4px 4px 0;">
             <strong style="color: #856404;">🟠 {total_count} lead{'s' if total_count != 1 else ''} need{'s' if total_count == 1 else ''} attention</strong>
-            <span style="color: #856404;"> (Acknowledged but no recent progress or activity)</span>
+            <span style="color: #856404;"> (have not progressed from Green - Approved by Locator in 7+ days)</span>
         </div>
     """, unsafe_allow_html=True)
 
