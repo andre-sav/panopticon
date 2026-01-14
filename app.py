@@ -597,7 +597,7 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
         <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 0.75rem 1rem;
                     border-radius: 0 4px 4px 0; margin-bottom: 0.5rem;">
             <strong>⚠️ {total_count} lead{'s' if total_count != 1 else ''} at risk</strong>
-            <span style="color: #856404;"> (Appointment not yet acknowledged)</span>
+            <span style="color: #856404;"> (Appointment unacknowledged by Locator)</span>
         </div>
     """, unsafe_allow_html=True)
 
@@ -661,7 +661,7 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
     st.markdown(f"""
         <div style="background: #fff3cd; border-left: 4px solid #fd7e14; padding: 0.75rem 1rem; margin-bottom: 0.5rem; border-radius: 0 4px 4px 0;">
             <strong style="color: #856404;">🟠 {total_count} lead{'s' if total_count != 1 else ''} need{'s' if total_count == 1 else ''} attention</strong>
-            <span style="color: #856404;"> (Acknowledged but no recent progress or activity)</span>
+            <span style="color: #856404;"> (have not progressed from Green - Approved by Locator in 7+ days)</span>
         </div>
     """, unsafe_allow_html=True)
 
@@ -1307,51 +1307,33 @@ def display_lead_detail(lead: dict):
         if not phone and not email:
             st.write("No contact info available")
 
-    # Notes section - use prefetched notes from session state, fall back to misc notes fields
+    # Notes section - use prefetched notes from session state
     st.divider()
     lead_id = lead.get("id")
-    note_content = ""
-    note_time = None
-    note_source = None  # Track where the note came from
-
     if lead_id:
-        # First try Notes related list
         cache_key = f"notes_{lead_id}"
         note_data = st.session_state.get(cache_key, {"content": "", "time": None})
         note_content = note_data.get("content", "") if isinstance(note_data, dict) else note_data
         note_time = note_data.get("time") if isinstance(note_data, dict) else None
-        if note_content:
-            note_source = "notes"
 
-    # Fall back to misc notes fields if no Notes related list content
-    if not note_content:
-        misc_notes_long = lead.get("misc_notes_long") or lead.get("Misc_Notes_Long") or ""
-        misc_notes = lead.get("misc_notes") or lead.get("Misc_Notes") or ""
-        # Prefer misc_notes_long as it's typically more detailed
-        if misc_notes_long.strip():
-            note_content = misc_notes_long.strip()
-            note_source = "misc_long"
-        elif misc_notes.strip():
-            note_content = misc_notes.strip()
-            note_source = "misc"
-
-    # Display the note
-    if note_time:
-        from src.zoho_client import parse_zoho_date
-        parsed_time = parse_zoho_date(note_time) if isinstance(note_time, str) else note_time
-        if parsed_time:
-            time_str = parsed_time.strftime("%b %d, %Y at %I:%M %p")
-            st.markdown(f"**Latest Note** ({time_str})")
+        # Format the timestamp if available
+        if note_time:
+            from src.zoho_client import parse_zoho_date
+            parsed_time = parse_zoho_date(note_time) if isinstance(note_time, str) else note_time
+            if parsed_time:
+                time_str = parsed_time.strftime("%b %d, %Y at %I:%M %p")
+                st.markdown(f"**Latest Note** ({time_str})")
+            else:
+                st.markdown("**Latest Note**")
         else:
             st.markdown("**Latest Note**")
-    elif note_source in ("misc_long", "misc"):
-        st.markdown("**Latest Note** (from Misc Notes)")
+
+        if note_content:
+            st.write(note_content)
+        else:
+            st.write("No notes available")
     else:
         st.markdown("**Latest Note**")
-
-    if note_content:
-        st.write(note_content)
-    else:
         st.write("No notes available")
 
     # Classification Reason section
