@@ -21,6 +21,7 @@ logging.basicConfig(
 from src.zoho_client import (
     get_leads_with_appointments,
     get_stage_history,
+    get_deliveries,
     get_last_error,
     get_error_type,
     get_partial_error,
@@ -218,6 +219,24 @@ def fetch_and_cache_leads(bypass_cache: bool = False):
     return st.session_state.get("leads", [])
 
 
+def fetch_and_cache_deliveries(bypass_cache: bool = False):
+    """Fetch deliveries from Zoho CRM and cache in session state.
+
+    Args:
+        bypass_cache: If True, skip Supabase cache and fetch fresh from API
+
+    Returns:
+        List of delivery dictionaries
+    """
+    # Check if we already have deliveries and not bypassing cache
+    if not bypass_cache and "deliveries" in st.session_state:
+        return st.session_state.deliveries
+
+    deliveries = get_deliveries(bypass_cache=bypass_cache)
+    st.session_state.deliveries = deliveries
+    return deliveries
+
+
 def display_header():
     """Display header with last updated timestamp and refresh button."""
     col1, col2 = st.columns([4, 1])
@@ -229,15 +248,17 @@ def display_header():
     with col2:
         is_refreshing = st.session_state.get("refreshing", False)
         if st.button("🔄 Refresh", disabled=is_refreshing, use_container_width=True):
-            from src.cache import clear_notes_cache
+            from src.cache import clear_notes_cache, clear_deliveries_cache
 
             # Clear session state and set flag to bypass Supabase cache
             st.session_state.pop("leads", None)
+            st.session_state.pop("deliveries", None)
             st.session_state.refreshing = True
             st.session_state.bypass_cache = True
 
-            # Clear notes cache so fresh notes are fetched
+            # Clear notes and deliveries cache so fresh data is fetched
             clear_notes_cache()
+            clear_deliveries_cache()
 
             # Clear stage history and notes from session state (will be re-fetched)
             keys_to_clear = [k for k in st.session_state.keys()
@@ -1315,6 +1336,14 @@ def display_lead_detail(lead: dict):
         st.markdown("**Latest Note**")
         st.write("No notes available")
 
+    # Classification Reason section
+    classification_reason = lead.get("classification_reason")
+    if classification_reason:
+        st.divider()
+        st.markdown("**Classification Reason**")
+        # Use markdown to render links in the reason
+        st.markdown(f"> {classification_reason}")
+
     # Stage History section (Story 4.2)
     st.divider()
     display_stage_history(lead)
@@ -1561,6 +1590,7 @@ def display_dashboard():
         spinner_msg = "Refreshing leads from Zoho CRM..." if bypass_cache else "Loading leads..."
         with st.spinner(spinner_msg):
             fetch_and_cache_leads(bypass_cache=bypass_cache)
+            fetch_and_cache_deliveries(bypass_cache=bypass_cache)
 
     leads = st.session_state.get("leads", [])
 
@@ -1575,8 +1605,38 @@ def display_dashboard():
 
     # Display table or empty state
     if leads:
-        # Format leads for display
-        display_data = format_leads_for_display(leads)
+        # Prefetch stage histories and notes for classification
+        # This must happen before format_leads_for_display for v2 classification
+        _prefetch_stage_histories(leads)
+        _prefetch_notes(leads)
+
+        # Import cache function once (not inside loop)
+        from src.cache import get_cached_stage_history
+
+        # Collect prefetched data from session state for v2 classification
+        stage_histories = {}
+        notes = {}
+        for lead in leads:
+            lead_id = lead.get("id")
+            if lead_id:
+                # Get stage history (raw, not formatted)
+                stage_key = f"stage_history_{lead_id}"
+                if stage_key in st.session_state:
+                    # The prefetch stores formatted history, we need raw for classification
+                    # So we'll access the raw history from cache
+                    raw_history = get_cached_stage_history(lead_id)
+                    if raw_history:
+                        stage_histories[lead_id] = raw_history
+                # Get notes
+                notes_key = f"notes_{lead_id}"
+                if notes_key in st.session_state:
+                    notes[lead_id] = st.session_state[notes_key]
+
+        # Get deliveries for cross-reference
+        deliveries = st.session_state.get("deliveries", [])
+
+        # Format leads for display with v2 classification
+        display_data = format_leads_for_display(leads, stage_histories, notes, deliveries)
 
         # Capture daily status snapshot for trend tracking (uses unfiltered data)
         _capture_daily_snapshot(display_data)

@@ -351,6 +351,94 @@ def clear_leads_cache() -> bool:
         return False
 
 
+# --- Deliveries Cache ---
+
+DELIVERIES_CACHE_KEY = "deliveries"
+
+
+def get_cached_deliveries() -> Optional[list]:
+    """
+    Get cached deliveries list.
+
+    Returns:
+        List of delivery dictionaries if cached and not expired, None otherwise.
+    """
+    client = _get_supabase_client()
+    if not client:
+        return None
+
+    try:
+        response = client.table("leads_cache").select("*").eq("cache_key", DELIVERIES_CACHE_KEY).execute()
+
+        if not response.data:
+            return None
+
+        record = response.data[0]
+        cached_at = datetime.fromisoformat(record["cached_at"].replace("Z", "+00:00"))
+
+        # Check if cache is still valid
+        if datetime.now(timezone.utc) - cached_at > timedelta(hours=CACHE_TTL_HOURS):
+            logger.info("Deliveries cache expired")
+            return None
+
+        logger.info("Deliveries cache hit (%d records)", len(record["data"]))
+        return record["data"]
+
+    except Exception as e:
+        logger.error("Error reading deliveries from cache: %s", e)
+        return None
+
+
+def set_cached_deliveries(deliveries: list) -> bool:
+    """
+    Cache the deliveries list.
+
+    Args:
+        deliveries: List of delivery dictionaries to cache
+
+    Returns:
+        True if cached successfully, False otherwise
+    """
+    client = _get_supabase_client()
+    if not client:
+        return False
+
+    try:
+        client.table("leads_cache").upsert({
+            "cache_key": DELIVERIES_CACHE_KEY,
+            "data": deliveries,
+            "cached_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+
+        logger.info("Cached %d deliveries", len(deliveries))
+        return True
+
+    except Exception as e:
+        logger.error("Error writing deliveries to cache: %s", e)
+        return False
+
+
+def clear_deliveries_cache() -> bool:
+    """
+    Clear the deliveries cache.
+
+    Returns:
+        True if cleared successfully, False otherwise
+    """
+    client = _get_supabase_client()
+    if not client:
+        return False
+
+    try:
+        client.table("leads_cache").delete().eq("cache_key", DELIVERIES_CACHE_KEY).execute()
+        logger.info("Cleared deliveries cache")
+        return True
+
+    except Exception as e:
+        logger.error("Error clearing deliveries cache: %s", e)
+        return False
+
+
 def get_all_cached_stage_history() -> list[dict]:
     """
     Get all cached stage history for Sankey diagram visualization.

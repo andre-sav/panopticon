@@ -13,11 +13,25 @@ import platform
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from rapidfuzz import fuzz
+
 logger = logging.getLogger(__name__)
 
 # Staleness thresholds (single source of truth)
 STALE_THRESHOLD_DAYS = 7
 AT_RISK_THRESHOLD_DAYS = 5
+
+# New classification thresholds
+STALE_NO_ACTIVITY_DAYS = 14  # No activity for 14+ days = Stale
+FUZZY_MATCH_THRESHOLD = 60  # 60% name similarity for delivery matching
+
+# Stage that indicates acknowledgment
+ACKNOWLEDGED_STAGE = "appt acknowledged"
+
+# Zoho CRM org ID for deep links
+ZOHO_ORG_ID = "org31352869"
+ZOHO_LOCATINGS_MODULE = "CustomModule5"
+ZOHO_DELIVERIES_MODULE = "CustomModule22"
 
 
 def calculate_days_since(appointment_date: datetime) -> int:
@@ -80,6 +94,365 @@ def get_lead_status(days_since: int, stage: str = None, days_since_modified: int
     if days_since >= AT_RISK_THRESHOLD_DAYS:
         return "at_risk"
     return "healthy"
+
+
+# --- Delivery Matching Utilities ---
+
+
+def format_delivery_link(delivery_id: str) -> str:
+    """Format a Zoho CRM link for a delivery record."""
+    return f"https://crm.zoho.com/crm/{ZOHO_ORG_ID}/tab/{ZOHO_DELIVERIES_MODULE}/{delivery_id}"
+
+
+def find_matching_delivery(
+    lead_id: str,
+    lead_name: str,
+    deliveries: list[dict],
+    lead_address: str = None,
+    lead_zip: str = None,
+) -> Optional[dict]:
+    """
+    Find a matching delivery record for a lead.
+
+    Matching strategy:
+    1. Direct ID match via Deliveries.Locatings lookup (most reliable)
+    2. Fuzzy name match at 60% threshold + Address AND Zip verification (fallback)
+
+    Args:
+        lead_id: The Locating record ID
+        lead_name: The Locating record name
+        deliveries: List of delivery records
+        lead_address: The lead's address (for verification)
+        lead_zip: The lead's zip code (for verification)
+
+    Returns:
+        Matching delivery dict if found, None otherwise
+    """
+    if not deliveries:
+        return None
+
+    # Strategy 1: Direct ID match via lookup field (most reliable)
+    for delivery in deliveries:
+        if delivery.get("locating_id") == lead_id:
+            return delivery
+
+    # Strategy 2: Fuzzy name match with Address AND Zip verification
+    if not lead_name:
+        return None
+
+    lead_name_lower = lead_name.lower().strip()
+    best_match = None
+    best_score = 0
+
+    for delivery in deliveries:
+        delivery_name = delivery.get("name")
+        if not delivery_name:
+            continue
+
+        # Use rapidfuzz for fuzzy matching on name
+        score = fuzz.ratio(lead_name_lower, delivery_name.lower().strip())
+
+        if score >= FUZZY_MATCH_THRESHOLD and score > best_score:
+            # For fuzzy matches, verify Address AND Zip if available
+            delivery_address = delivery.get("address") or ""
+            delivery_zip = delivery.get("zip_code") or ""
+
+            # If lead has address/zip info, require both to match
+            if lead_address and lead_zip:
+                address_match = lead_address.lower().strip() in delivery_address.lower() or \
+                               delivery_address.lower() in lead_address.lower().strip()
+                zip_match = str(lead_zip).strip() == str(delivery_zip).strip()
+
+                if address_match and zip_match:
+                    best_match = delivery
+                    best_score = score
+            else:
+                # No lead address/zip to verify against, accept the name match
+                best_match = delivery
+                best_score = score
+
+    if best_match:
+        logger.debug(
+            "Fuzzy matched lead '%s' to delivery '%s' (score: %d%%)",
+            lead_name, best_match.get("name"), best_score
+        )
+
+    return best_match
+
+
+def has_been_acknowledged(stage_history: list[dict], current_stage: str) -> bool:
+    """
+    Check if a lead has ever been in the 'APPT Acknowledged' stage.
+
+    Args:
+        stage_history: List of stage transitions [{from_stage, to_stage, changed_at}]
+        current_stage: The lead's current stage
+
+    Returns:
+        True if lead has been acknowledged, False otherwise
+    """
+    # Check current stage
+    if current_stage and ACKNOWLEDGED_STAGE in current_stage.lower():
+        return True
+
+    # Check stage history for any transition to/from acknowledged stage
+    for transition in stage_history or []:
+        to_stage = (transition.get("to_stage") or "").lower()
+        if ACKNOWLEDGED_STAGE in to_stage:
+            return True
+
+    return False
+
+
+def is_in_later_stage(current_stage: str) -> bool:
+    """
+    Check if the lead is in a stage that comes after 'APPT Acknowledged' in the pipeline.
+
+    This is used to detect "stage skipped" situations where procedure wasn't followed
+    but work is still being done.
+
+    Args:
+        current_stage: The lead's current stage
+
+    Returns:
+        True if in a later stage, False otherwise
+    """
+    if not current_stage:
+        return False
+
+    stage_lower = current_stage.lower()
+
+    # Stages that come after acknowledgment
+    later_stages = (
+        "green - approved by locator",
+        "green - sitesurvey sent",
+        "green - lll approved",
+        "green - lll fulfilled",
+        "green/no-operator",
+        "green/no operator",
+        "delivery requested",
+        "green/delivered",
+        "green/ delivered",
+        "hlm follow up",
+    )
+
+    for stage in later_stages:
+        if stage in stage_lower:
+            return True
+
+    return False
+
+
+def get_days_since_last_activity(
+    stage_history: list[dict],
+    latest_note: Optional[dict],
+) -> int:
+    """
+    Calculate days since last activity (stage change or note).
+
+    Args:
+        stage_history: List of stage transitions
+        latest_note: Latest note dict with 'time' field
+
+    Returns:
+        Days since last activity, or 9999 if no activity found
+    """
+    last_activity = None
+
+    # Check stage history for last transition
+    if stage_history:
+        for transition in stage_history:
+            changed_at = transition.get("changed_at")
+            if isinstance(changed_at, datetime):
+                if last_activity is None or changed_at > last_activity:
+                    last_activity = changed_at
+
+    # Check note timestamp
+    if latest_note:
+        note_time = latest_note.get("time")
+        if note_time:
+            # Parse if string
+            if isinstance(note_time, str):
+                try:
+                    # Handle ISO format with timezone
+                    if "T" in note_time:
+                        note_time = datetime.fromisoformat(note_time.replace("Z", "+00:00"))
+                    else:
+                        note_time = None
+                except ValueError:
+                    note_time = None
+
+            if isinstance(note_time, datetime):
+                if last_activity is None or note_time > last_activity:
+                    last_activity = note_time
+
+    if last_activity is None:
+        return 9999  # No activity found
+
+    now = datetime.now(timezone.utc)
+    if last_activity.tzinfo is None:
+        last_activity = last_activity.replace(tzinfo=timezone.utc)
+
+    return (now - last_activity).days
+
+
+def has_note_since_appointment(
+    latest_note: Optional[dict],
+    appointment_date: Optional[datetime],
+) -> bool:
+    """
+    Check if a note was added after the appointment date.
+
+    Args:
+        latest_note: Latest note dict with 'time' field
+        appointment_date: The appointment date
+
+    Returns:
+        True if note exists and was added after appointment, False otherwise
+    """
+    if not latest_note or not appointment_date:
+        return False
+
+    note_time = latest_note.get("time")
+    if not note_time:
+        return False
+
+    # Parse if string
+    if isinstance(note_time, str):
+        try:
+            if "T" in note_time:
+                note_time = datetime.fromisoformat(note_time.replace("Z", "+00:00"))
+            else:
+                return False
+        except ValueError:
+            return False
+
+    if not isinstance(note_time, datetime):
+        return False
+
+    # Ensure both have timezone info for comparison
+    if note_time.tzinfo is None:
+        note_time = note_time.replace(tzinfo=timezone.utc)
+    if appointment_date.tzinfo is None:
+        appointment_date = appointment_date.replace(tzinfo=timezone.utc)
+
+    return note_time > appointment_date
+
+
+def get_lead_status_v2(
+    lead: dict,
+    stage_history: list[dict],
+    latest_note: Optional[dict],
+    deliveries: list[dict],
+) -> tuple[str, str]:
+    """
+    Determine lead status with detailed classification reason.
+
+    New classification logic:
+    1. Terminal stage → Healthy ("Completed - [stage]")
+    2. Delivery record exists → Healthy ("Delivery record found: [name]")
+    3. Recent note since appointment → Healthy ("Actively worked - note added [date]")
+    4. Stage skipped to later stage → Healthy ("Stage skipped - procedure not followed")
+    5. No activity for 14+ days → Stale ("No activity for X days")
+    6. Never acknowledged (early stage) → At Risk ("Appointment not acknowledged")
+    7. Acknowledged but stalled → Needs Attention ("Acknowledged but no progress")
+    8. Default → Healthy ("Recently created")
+
+    Args:
+        lead: Lead dictionary with 'id', 'name', 'current_stage', 'appointment_date'
+        stage_history: List of stage transitions for the lead
+        latest_note: Latest note dict with 'content' and 'time'
+        deliveries: List of all delivery records
+
+    Returns:
+        Tuple of (status, reason) where status is 'stale', 'at_risk', 'needs_attention', or 'healthy'
+    """
+    lead_id = lead.get("id", "")
+    lead_name = lead.get("name") or lead.get("Lead Name") or ""
+    current_stage = lead.get("current_stage") or lead.get("Stage") or ""
+    appointment_date = lead.get("appointment_date") or lead.get("Appointment Date")
+    lead_address = lead.get("street_address") or lead.get("Street_Address") or ""
+    lead_zip = lead.get("zip_code") or lead.get("Zip_Code") or ""
+
+    stage_lower = current_stage.lower() if current_stage else ""
+
+    # 1. Terminal/completion stages - always healthy
+    terminal_stages = (
+        "green/ delivered",
+        "green/delivered",
+        "delivery requested",
+        "red/ rejected",
+        "red/rejected",
+        "green/no operator",
+        "green/no-operator",
+        "declined by operator",
+        "green - lll fulfilled",
+        "red/not viable",
+    )
+    for terminal in terminal_stages:
+        if terminal in stage_lower:
+            return ("healthy", f"Completed - {current_stage}")
+
+    # 2. Check for matching delivery record
+    matching_delivery = find_matching_delivery(lead_id, lead_name, deliveries, lead_address, lead_zip)
+    if matching_delivery:
+        delivery_name = matching_delivery.get("name", "Unknown")
+        delivery_id = matching_delivery.get("id")
+        if delivery_id:
+            delivery_link = format_delivery_link(delivery_id)
+            return ("healthy", f"Delivery record found: [{delivery_name}]({delivery_link})")
+        else:
+            return ("healthy", f"Delivery record found: {delivery_name}")
+
+    # 3. Check for recent note since appointment
+    if has_note_since_appointment(latest_note, appointment_date):
+        note_time = latest_note.get("time")
+        if isinstance(note_time, str):
+            try:
+                note_time = datetime.fromisoformat(note_time.replace("Z", "+00:00"))
+            except ValueError:
+                note_time = None
+
+        if isinstance(note_time, datetime):
+            date_str = note_time.strftime("%b %d, %Y")
+            return ("healthy", f"Actively worked - note added {date_str}")
+        else:
+            return ("healthy", "Actively worked - recent note added")
+
+    # 4. Check acknowledgment status
+    acknowledged = has_been_acknowledged(stage_history, current_stage)
+
+    # 5. Check for stage skipped (in later stage but never acknowledged)
+    if not acknowledged and is_in_later_stage(current_stage):
+        return ("healthy", "Stage skipped - procedure not followed but being worked")
+
+    # 6. Check for no activity (Stale)
+    days_since_activity = get_days_since_last_activity(stage_history, latest_note)
+    if days_since_activity >= STALE_NO_ACTIVITY_DAYS:
+        return ("stale", f"No activity for {days_since_activity} days")
+
+    # 7. Never acknowledged - At Risk
+    if not acknowledged:
+        return ("at_risk", "Appointment has never been acknowledged")
+
+    # 8. Acknowledged but stalled - Needs Attention
+    # Find when they were acknowledged
+    acknowledged_date = None
+    for transition in stage_history or []:
+        to_stage = (transition.get("to_stage") or "").lower()
+        if ACKNOWLEDGED_STAGE in to_stage:
+            acknowledged_date = transition.get("changed_at")
+            break
+
+    if acknowledged_date:
+        if isinstance(acknowledged_date, datetime):
+            date_str = acknowledged_date.strftime("%b %d, %Y")
+            return ("needs_attention", f"Acknowledged on {date_str} but no progress since. No notes since appointment.")
+        else:
+            return ("needs_attention", "Acknowledged but no progress since. No notes since appointment.")
+
+    # 9. Default - acknowledged but stalled (no date found in history)
+    return ("needs_attention", "Acknowledged but stalled - no recent progress")
 
 
 # Centralized status configuration - single source of truth for emoji, color, and labels
@@ -234,15 +607,23 @@ def format_zoho_link(lead_id: str) -> str:
     Returns:
         URL to open the record in Zoho CRM
     """
-    return f"https://crm.zoho.com/crm/org31352869/tab/CustomModule5/{lead_id}"
+    return f"https://crm.zoho.com/crm/{ZOHO_ORG_ID}/tab/{ZOHO_LOCATINGS_MODULE}/{lead_id}"
 
 
-def format_leads_for_display(leads: list[dict]) -> list[dict]:
+def format_leads_for_display(
+    leads: list[dict],
+    stage_histories: Optional[dict[str, list[dict]]] = None,
+    notes: Optional[dict[str, dict]] = None,
+    deliveries: Optional[list[dict]] = None,
+) -> list[dict]:
     """
     Transform lead data for table display.
 
     Args:
         leads: List of lead dictionaries from get_leads_with_appointments()
+        stage_histories: Optional dict mapping lead_id to stage history list
+        notes: Optional dict mapping lead_id to note dict
+        deliveries: Optional list of delivery records for cross-reference
 
     Returns:
         List of dictionaries formatted for display with columns:
@@ -250,7 +631,8 @@ def format_leads_for_display(leads: list[dict]) -> list[dict]:
         - Lead Name
         - Appointment Date
         - Days (days since appointment)
-        - Status: stale (7+ days), at_risk (5-6 days), needs_attention, healthy (<5 days)
+        - Status: stale, at_risk, needs_attention, healthy
+        - classification_reason: Human-readable reason for the classification
         - Stage
         - Locator
         - Phone (tel: link or None)
@@ -258,24 +640,38 @@ def format_leads_for_display(leads: list[dict]) -> list[dict]:
         - zoho_link (URL to Zoho CRM record)
     """
     result = []
+    use_v2_classification = stage_histories is not None and deliveries is not None
+
     for lead in leads:
         days = calculate_days_since(lead["appointment_date"]) if lead.get("appointment_date") else None
         stage = lead.get("current_stage")
-
-        # Calculate days since modification for stage-specific rules
-        days_since_modified = None
-        if lead.get("modified_time"):
-            days_since_modified = calculate_days_since(lead["modified_time"])
-
-        status = get_lead_status(days, stage, days_since_modified) if days is not None else None
-
         lead_id = lead.get("id")
+
+        status = None
+        classification_reason = None
+
+        if use_v2_classification and lead_id:
+            # Use new v2 classification with full context
+            lead_stage_history = stage_histories.get(lead_id, [])
+            lead_note = notes.get(lead_id) if notes else None
+            status, classification_reason = get_lead_status_v2(
+                lead, lead_stage_history, lead_note, deliveries
+            )
+        else:
+            # Fallback to legacy classification
+            days_since_modified = None
+            if lead.get("modified_time"):
+                days_since_modified = calculate_days_since(lead["modified_time"])
+            status = get_lead_status(days, stage, days_since_modified) if days is not None else None
+            classification_reason = None
+
         result.append({
             "id": lead_id,
             "Lead Name": safe_display(lead.get("name")),
             "Appointment Date": format_date(lead.get("appointment_date")),
             "Days": days,
             "Status": format_status_display(status),
+            "classification_reason": classification_reason,
             "Stage": safe_display(lead.get("current_stage")),
             "Locator": safe_display(lead.get("locator_name")),
             "Phone": format_phone_link(lead.get("locator_phone")),

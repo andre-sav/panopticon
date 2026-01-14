@@ -641,7 +641,7 @@ def get_leads_with_appointments(bypass_cache: bool = False) -> list[dict]:
     # Note: COQL doesn't expand lookup fields, so Locator_Name returns ID only
     # Locator details are looked up from local CSV cache
     coql_query = """
-        SELECT id, Name, APPT_Date, Stage, Locator_Name, Created_Time, Modified_Time
+        SELECT id, Name, APPT_Date, Stage, Locator_Name, Street_Address, Zip_Code, Created_Time, Modified_Time
         FROM Locatings
         WHERE APPT_Date is not null
         ORDER BY APPT_Date DESC
@@ -844,7 +844,8 @@ def get_stage_histories_batch(leads: list[dict]) -> dict[str, list]:
         if lead_id in cached:
             history = cached[lead_id]
             lead = leads_by_id.get(lead_id)
-            current_stage = lead.get("Stage") if lead else None
+            # Support both formatted ('Stage') and raw ('current_stage') field names
+            current_stage = lead.get("Stage") or lead.get("current_stage") if lead else None
 
             # Smart invalidation: check if cache matches current stage
             if current_stage and history:
@@ -1168,3 +1169,89 @@ def _fetch_latest_note_for_lead(
     except Exception as e:
         logger.error("Error fetching notes for lead %s: %s", lead_id, e)
         return None
+
+
+def get_deliveries(bypass_cache: bool = False) -> list[dict]:
+    """
+    Fetch all delivery records from Zoho CRM Deliveries module.
+
+    Uses Supabase cache with 24-hour TTL to reduce API calls.
+    Used for cross-referencing with Locatings to determine if a lead
+    has a corresponding delivery request.
+
+    Args:
+        bypass_cache: If True, skip cache and fetch fresh from API
+
+    Returns:
+        List of delivery dictionaries with fields:
+            - id: Delivery record ID
+            - name: Delivery name (for fuzzy matching)
+            - locating_id: Linked Locating ID (if populated)
+            - created_time: When delivery was created
+    """
+    from src.cache import get_cached_deliveries, set_cached_deliveries
+
+    _init_session_state()
+
+    # Check cache first (unless bypassed)
+    if not bypass_cache:
+        cached_deliveries = get_cached_deliveries()
+        if cached_deliveries is not None:
+            logger.debug("Using cached deliveries (%d records)", len(cached_deliveries))
+            return cached_deliveries
+
+    logger.info("Fetching deliveries from API")
+
+    # Use COQL to fetch all deliveries
+    # Note: Locatings lookup field returns ID only in COQL
+    coql_query = """
+        SELECT id, Name, Locatings, Address, Zip_Code, Created_Time
+        FROM Deliveries
+        WHERE id is not null
+        ORDER BY Created_Time DESC
+        LIMIT 2000
+    """.strip()
+
+    url = f"{get_api_domain()}/crm/v8/coql"
+
+    try:
+        response = _make_request("POST", url, json_data={"select_query": coql_query})
+        if response is None:
+            logger.warning("Failed to fetch deliveries (no response)")
+            return []
+
+        data = response.json()
+        deliveries_data = data.get("data", [])
+
+        deliveries = []
+        for delivery in deliveries_data:
+            # Extract Locatings lookup (returns {id} or None)
+            locatings_lookup = delivery.get("Locatings")
+            locating_id = None
+            if isinstance(locatings_lookup, dict):
+                locating_id = locatings_lookup.get("id")
+
+            deliveries.append({
+                "id": delivery.get("id"),
+                "name": delivery.get("Name"),
+                "locating_id": locating_id,
+                "address": delivery.get("Address"),
+                "zip_code": delivery.get("Zip_Code"),
+                "created_time": delivery.get("Created_Time"),
+            })
+
+        logger.info("Fetched %d deliveries from API", len(deliveries))
+
+        # Cache the results
+        set_cached_deliveries(deliveries)
+
+        return deliveries
+
+    except JSONDecodeError:
+        logger.error("Invalid JSON response from Zoho CRM for deliveries")
+        _set_error("Invalid response from Zoho CRM.", ERROR_TYPE_UNKNOWN)
+        return []
+    except (KeyError, TypeError, AttributeError) as e:
+        logger.error("Error processing delivery data: %s", type(e).__name__)
+        _set_error(f"Error processing delivery data: {type(e).__name__}", ERROR_TYPE_UNKNOWN)
+        return []

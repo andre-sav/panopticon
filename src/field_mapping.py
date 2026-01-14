@@ -12,6 +12,8 @@ ZOHO_FIELD_MAP = {
     "Stage": "current_stage",
     "Locator_Name": "locator_name",  # Lookup field - returns {id, name} object
     "APPT_Date": "appointment_date",  # Actual appointment date field
+    "Street_Address": "street_address",  # For delivery matching
+    "Zip_Code": "zip_code",  # For delivery matching
     "Created_Time": "created_time",
     "Modified_Time": "modified_time",
 }
