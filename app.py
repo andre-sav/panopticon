@@ -1610,24 +1610,17 @@ def display_dashboard():
         _prefetch_stage_histories(leads)
         _prefetch_notes(leads)
 
-        # Import cache function once (not inside loop)
-        from src.cache import get_cached_stage_history
+        # Batch fetch raw stage histories for v2 classification (single query)
+        from src.cache import get_cached_stage_histories_batch
 
-        # Collect prefetched data from session state for v2 classification
-        stage_histories = {}
+        lead_ids = [lead.get("id") for lead in leads if lead.get("id")]
+        stage_histories = get_cached_stage_histories_batch(lead_ids)
+
+        # Collect notes from session state (already prefetched)
         notes = {}
         for lead in leads:
             lead_id = lead.get("id")
             if lead_id:
-                # Get stage history (raw, not formatted)
-                stage_key = f"stage_history_{lead_id}"
-                if stage_key in st.session_state:
-                    # The prefetch stores formatted history, we need raw for classification
-                    # So we'll access the raw history from cache
-                    raw_history = get_cached_stage_history(lead_id)
-                    if raw_history:
-                        stage_histories[lead_id] = raw_history
-                # Get notes
                 notes_key = f"notes_{lead_id}"
                 if notes_key in st.session_state:
                     notes[lead_id] = st.session_state[notes_key]
