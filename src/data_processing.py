@@ -153,7 +153,13 @@ def find_matching_delivery(
         score = fuzz.ratio(lead_name_lower, delivery_name.lower().strip())
 
         if score >= FUZZY_MATCH_THRESHOLD and score > best_score:
-            # For fuzzy matches, verify Address AND Zip if available
+            # High-confidence name matches (90%+) don't need address verification
+            if score >= 90:
+                best_match = delivery
+                best_score = score
+                continue
+
+            # For lower confidence matches, verify Address AND Zip if available
             delivery_address = delivery.get("address") or ""
             delivery_zip = delivery.get("zip_code") or ""
 
@@ -204,40 +210,38 @@ def has_been_acknowledged(stage_history: list[dict], current_stage: str) -> bool
     return False
 
 
-def is_in_later_stage(current_stage: str) -> bool:
+def has_progressed_from_unacknowledged(stage_history: list[dict], current_stage: str = "") -> bool:
     """
-    Check if the lead is in a stage that comes after 'APPT Acknowledged' in the pipeline.
+    Check if a lead has progressed FROM the 'Appt Not Acknowledged' stage.
 
-    This is used to detect "stage skipped" situations where procedure wasn't followed
-    but work is still being done.
+    Checks multiple indicators:
+    1. Any transition with from_stage containing "not acknowledged"
+    2. Any transition with to_stage containing "acknowledged" (but not "not acknowledged")
+    3. Current stage contains "acknowledged" (but not "not acknowledged")
 
     Args:
+        stage_history: List of stage transitions [{from_stage, to_stage, changed_at}]
         current_stage: The lead's current stage
 
     Returns:
-        True if in a later stage, False otherwise
+        True if lead has moved forward from the unacknowledged stage, False otherwise
     """
-    if not current_stage:
-        return False
+    # Check if current stage indicates acknowledgment
+    if current_stage:
+        stage_lower = current_stage.lower()
+        if "acknowledged" in stage_lower and "not acknowledged" not in stage_lower:
+            return True
 
-    stage_lower = current_stage.lower()
+    for transition in stage_history or []:
+        from_stage = (transition.get("from_stage") or "").lower()
+        to_stage = (transition.get("to_stage") or "").lower()
 
-    # Stages that come after acknowledgment
-    later_stages = (
-        "green - approved by locator",
-        "green - sitesurvey sent",
-        "green - lll approved",
-        "green - lll fulfilled",
-        "green/no-operator",
-        "green/no operator",
-        "delivery requested",
-        "green/delivered",
-        "green/ delivered",
-        "hlm follow up",
-    )
+        # Check if this transition moved FROM an unacknowledged stage
+        if "not acknowledged" in from_stage:
+            return True
 
-    for stage in later_stages:
-        if stage in stage_lower:
+        # Check if this transition moved TO an acknowledged stage
+        if "acknowledged" in to_stage and "not acknowledged" not in to_stage:
             return True
 
     return False
@@ -263,6 +267,12 @@ def get_days_since_last_activity(
     if stage_history:
         for transition in stage_history:
             changed_at = transition.get("changed_at")
+            # Parse string dates (from cache) to datetime
+            if isinstance(changed_at, str):
+                try:
+                    changed_at = datetime.fromisoformat(changed_at.replace("Z", "+00:00"))
+                except ValueError:
+                    changed_at = None
             if isinstance(changed_at, datetime):
                 if last_activity is None or changed_at > last_activity:
                     last_activity = changed_at
@@ -404,7 +414,7 @@ def get_lead_status_v2(
         else:
             return ("healthy", f"Delivery record found: {delivery_name}")
 
-    # 3. Check for recent note since appointment
+    # 3. Check for recent note since appointment (from Notes related list)
     if has_note_since_appointment(latest_note, appointment_date):
         note_time = latest_note.get("time")
         if isinstance(note_time, str):
@@ -419,40 +429,28 @@ def get_lead_status_v2(
         else:
             return ("healthy", "Actively worked - recent note added")
 
-    # 4. Check acknowledgment status
-    acknowledged = has_been_acknowledged(stage_history, current_stage)
+    # 3b. Check for misc notes fields on the record itself
+    misc_notes = lead.get("misc_notes") or ""
+    misc_notes_long = lead.get("misc_notes_long") or ""
+    if misc_notes.strip() or misc_notes_long.strip():
+        return ("healthy", "Has notes on record (Misc Notes)")
 
-    # 5. Check for stage skipped (in later stage but never acknowledged)
-    if not acknowledged and is_in_later_stage(current_stage):
-        return ("healthy", "Stage skipped - procedure not followed but being worked")
-
-    # 6. Check for no activity (Stale)
+    # 4. Check for no activity (Stale) - must come before other checks
     days_since_activity = get_days_since_last_activity(stage_history, latest_note)
     if days_since_activity >= STALE_NO_ACTIVITY_DAYS:
         return ("stale", f"No activity for {days_since_activity} days")
 
-    # 7. Never acknowledged - At Risk
-    if not acknowledged:
-        return ("at_risk", "Appointment has never been acknowledged")
+    # 5. Check if lead has progressed from "Appt Not Acknowledged"
+    progressed = has_progressed_from_unacknowledged(stage_history, current_stage)
 
-    # 8. Acknowledged but stalled - Needs Attention
-    # Find when they were acknowledged
-    acknowledged_date = None
-    for transition in stage_history or []:
-        to_stage = (transition.get("to_stage") or "").lower()
-        if ACKNOWLEDGED_STAGE in to_stage:
-            acknowledged_date = transition.get("changed_at")
-            break
+    # 6. Progressed but no notes - Needs Attention
+    # Someone moved the lead forward but didn't document with notes
+    if progressed:
+        return ("needs_attention", "Stage progressed but no notes added since appointment")
 
-    if acknowledged_date:
-        if isinstance(acknowledged_date, datetime):
-            date_str = acknowledged_date.strftime("%b %d, %Y")
-            return ("needs_attention", f"Acknowledged on {date_str} but no progress since. No notes since appointment.")
-        else:
-            return ("needs_attention", "Acknowledged but no progress since. No notes since appointment.")
-
-    # 9. Default - acknowledged but stalled (no date found in history)
-    return ("needs_attention", "Acknowledged but stalled - no recent progress")
+    # 7. Never progressed from unacknowledged - At Risk
+    # Lead is still stuck in initial unacknowledged state
+    return ("at_risk", "Appointment has never been acknowledged")
 
 
 # Centralized status configuration - single source of truth for emoji, color, and labels

@@ -641,7 +641,7 @@ def get_leads_with_appointments(bypass_cache: bool = False) -> list[dict]:
     # Note: COQL doesn't expand lookup fields, so Locator_Name returns ID only
     # Locator details are looked up from local CSV cache
     coql_query = """
-        SELECT id, Name, APPT_Date, Stage, Locator_Name, Street_Address, Zip_Code, Created_Time, Modified_Time
+        SELECT id, Name, APPT_Date, Stage, Locator_Name, Street_Address, Zip_Code, Created_Time, Modified_Time, Misc_Notes, Misc_Notes_Long
         FROM Locatings
         WHERE APPT_Date is not null
         ORDER BY APPT_Date DESC
