@@ -263,6 +263,12 @@ def get_days_since_last_activity(
     if stage_history:
         for transition in stage_history:
             changed_at = transition.get("changed_at")
+            # Parse string dates (from cache) to datetime
+            if isinstance(changed_at, str):
+                try:
+                    changed_at = datetime.fromisoformat(changed_at.replace("Z", "+00:00"))
+                except ValueError:
+                    changed_at = None
             if isinstance(changed_at, datetime):
                 if last_activity is None or changed_at > last_activity:
                     last_activity = changed_at
