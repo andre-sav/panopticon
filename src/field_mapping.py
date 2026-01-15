@@ -16,6 +16,8 @@ ZOHO_FIELD_MAP = {
     "Zip_Code": "zip_code",  # For delivery matching
     "Created_Time": "created_time",
     "Modified_Time": "modified_time",
+    "Misc_Notes": "misc_notes",  # Short notes field on record
+    "Misc_Notes_Long": "misc_notes_long",  # Long notes field on record
 }
 
 # Pipeline stage ordering (for sorting/display)
