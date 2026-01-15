@@ -1677,10 +1677,31 @@ def display_dashboard():
     if "leads" not in st.session_state:
         # Check if this is a forced refresh (bypass cache)
         bypass_cache = st.session_state.pop("bypass_cache", False)
-        spinner_msg = "Refreshing leads from Zoho CRM..." if bypass_cache else "Loading leads..."
-        with st.spinner(spinner_msg):
-            fetch_and_cache_leads(bypass_cache=bypass_cache)
-            fetch_and_cache_deliveries(bypass_cache=bypass_cache)
+        is_refresh = st.session_state.get("refreshing", False)
+
+        if is_refresh:
+            # Show detailed progress for manual refresh
+            with st.status("Refreshing data from Zoho CRM...", expanded=True) as status:
+                st.write("Fetching leads...")
+                fetch_and_cache_leads(bypass_cache=bypass_cache)
+
+                st.write("Fetching deliveries...")
+                fetch_and_cache_deliveries(bypass_cache=bypass_cache)
+
+                leads = st.session_state.get("leads", [])
+                if leads:
+                    st.write(f"Loading stage histories for {len(leads)} leads...")
+                    _prefetch_stage_histories(leads)
+
+                    st.write("Loading notes...")
+                    _prefetch_notes(leads)
+
+                status.update(label="Refresh complete!", state="complete", expanded=False)
+        else:
+            # Simple spinner for initial page load
+            with st.spinner("Loading leads..."):
+                fetch_and_cache_leads(bypass_cache=bypass_cache)
+                fetch_and_cache_deliveries(bypass_cache=bypass_cache)
 
     leads = st.session_state.get("leads", [])
 
@@ -1699,7 +1720,7 @@ def display_dashboard():
         current_lead_ids = {lead.get("id") for lead in leads if lead.get("id")}
         _cleanup_stale_session_state(current_lead_ids)
 
-        # Prefetch stage histories and notes for classification
+        # Prefetch stage histories and notes for classification (if not already done during refresh)
         # This must happen before format_leads_for_display for v2 classification
         _prefetch_stage_histories(leads)
         _prefetch_notes(leads)
