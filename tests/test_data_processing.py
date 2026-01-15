@@ -28,7 +28,6 @@ from src.data_processing import (
     get_unique_stages,
     get_unique_locators,
     STALE_THRESHOLD_DAYS,
-    STALE_NO_ACTIVITY_DAYS,
     AT_RISK_THRESHOLD_DAYS,
     DEFAULT_SORT,
     SORT_OPTIONS,
@@ -64,23 +63,23 @@ class TestCalculateDaysSince:
 
 
 class TestGetLeadStatus:
-    """Tests for get_lead_status function (deprecated - aligned with v2 14-day threshold)."""
+    """Tests for get_lead_status function."""
 
     def test_stale_at_threshold(self):
-        """Exactly 14 days is stale (aligned with v2 classification)."""
-        assert get_lead_status(STALE_NO_ACTIVITY_DAYS) == "stale"
+        """Exactly 7 days is stale."""
+        assert get_lead_status(STALE_THRESHOLD_DAYS) == "stale"
 
     def test_stale_above_threshold(self):
-        """More than 14 days is stale."""
-        assert get_lead_status(15) == "stale"
+        """More than 7 days is stale."""
+        assert get_lead_status(10) == "stale"
 
     def test_at_risk_at_threshold(self):
         """Exactly 5 days is at_risk."""
         assert get_lead_status(AT_RISK_THRESHOLD_DAYS) == "at_risk"
 
     def test_at_risk_between_thresholds(self):
-        """10 days (between 5 and 14) is at_risk."""
-        assert get_lead_status(10) == "at_risk"
+        """6 days (between 5 and 7) is at_risk."""
+        assert get_lead_status(6) == "at_risk"
 
     def test_healthy_below_at_risk(self):
         """Less than 5 days is healthy."""
@@ -95,10 +94,10 @@ class TestGetLeadStatus:
         assert get_lead_status(-3) == "healthy"
 
     # Tests for "Appt Not Acknowledged" stage-specific behavior
-    def test_appt_not_acknowledged_stale_at_fourteen_plus_days(self):
-        """Appt Not Acknowledged still becomes stale at 14+ days."""
-        assert get_lead_status(14, stage="Appt Not Acknowledged") == "stale"
-        assert get_lead_status(15, stage="Appt Not Acknowledged") == "stale"
+    def test_appt_not_acknowledged_stale_at_seven_plus_days(self):
+        """Appt Not Acknowledged still becomes stale at 7+ days."""
+        assert get_lead_status(7, stage="Appt Not Acknowledged") == "stale"
+        assert get_lead_status(10, stage="Appt Not Acknowledged") == "stale"
 
     def test_appt_not_acknowledged_at_risk_at_five_six_days(self):
         """Appt Not Acknowledged is at_risk at 5-6 days (same as normal)."""
@@ -264,14 +263,8 @@ class TestFormatLeadsForDisplay:
         # Raw field names should not be present (except id which is needed for stage history)
         assert "locator_phone" not in result[0]
         assert "locator_email" not in result[0]
-        # Should have display columns including id (Story 4.2), Days, Status (Story 2.1, 2.2),
-        # contact links (Story 1.7), zoho_link, classification_reason (v2), and misc_notes fields
-        expected_keys = {
-            "id", "Lead Name", "Appointment Date", "Days", "Status", "Stage",
-            "Locator", "Phone", "Email", "zoho_link", "classification_reason",
-            "misc_notes", "misc_notes_long"
-        }
-        assert set(result[0].keys()) == expected_keys
+        # Should have display columns including id (Story 4.2), Days, Status (Story 2.1, 2.2), contact links (Story 1.7), and zoho_link
+        assert set(result[0].keys()) == {"id", "Lead Name", "Appointment Date", "Days", "Status", "Stage", "Locator", "Phone", "Email", "zoho_link"}
 
 
 class TestFormatLastUpdated:
@@ -622,18 +615,14 @@ class TestFormatStatusDisplay:
 
 
 class TestFormatLeadsForDisplayStatus:
-    """Tests for Status column in format_leads_for_display (Story 2.2, 2.4).
+    """Tests for Status column in format_leads_for_display (Story 2.2, 2.4)."""
 
-    Note: Legacy classification uses STALE_NO_ACTIVITY_DAYS (14 days) threshold,
-    aligned with v2 classification.
-    """
-
-    def test_status_stale_for_fourteen_plus_days(self):
-        """Status column shows '🔴 stale' for 14+ days."""
+    def test_status_stale_for_seven_plus_days(self):
+        """Status column shows '🔴 stale' for 7+ days (AC#1)."""
         leads = [
             {
                 "name": "John",
-                "appointment_date": datetime.now(timezone.utc) - timedelta(days=14),
+                "appointment_date": datetime.now(timezone.utc) - timedelta(days=7),
                 "current_stage": "Appt Set",
                 "locator_name": "Marcus",
                 "locator_phone": None,
@@ -645,12 +634,12 @@ class TestFormatLeadsForDisplayStatus:
 
         assert result[0]["Status"] == "🔴 stale"
 
-    def test_status_stale_for_fifteen_days(self):
-        """Status column shows '🔴 stale' for 15 days."""
+    def test_status_stale_for_ten_days(self):
+        """Status column shows '🔴 stale' for 10 days."""
         leads = [
             {
                 "name": "John",
-                "appointment_date": datetime.now(timezone.utc) - timedelta(days=15),
+                "appointment_date": datetime.now(timezone.utc) - timedelta(days=10),
                 "current_stage": "Appt Set",
                 "locator_name": "Marcus",
                 "locator_phone": None,
@@ -1102,10 +1091,7 @@ class TestFilterByLocator:
 
 
 class TestFilterByDateRange:
-    """Tests for filter_by_date_range function (Story 3.1).
-
-    Note: Date range presets include Future appointments where noted.
-    """
+    """Tests for filter_by_date_range function (Story 3.1)."""
 
     def test_filter_all_dates_returns_all(self):
         """Filter with 'All Dates' returns all leads."""
@@ -1118,58 +1104,55 @@ class TestFilterByDateRange:
 
         assert len(result) == 2
 
-    def test_filter_future(self):
-        """Filter 'Future' returns only leads with future appointments."""
+    def test_filter_today(self):
+        """Filter 'Today' returns only leads with today's appointment."""
         leads = [
-            {"Days": -2, "Lead Name": "Future Lead"},
             {"Days": 0, "Lead Name": "Today Lead"},
             {"Days": 1, "Lead Name": "Yesterday Lead"},
         ]
 
-        result = filter_by_date_range(leads, "Future")
+        result = filter_by_date_range(leads, "Today")
 
         assert len(result) == 1
-        assert result[0]["Lead Name"] == "Future Lead"
+        assert result[0]["Lead Name"] == "Today Lead"
 
-    def test_filter_last_7_days_plus_future_includes_day_6(self):
-        """Filter 'Last 7 Days + Future' includes leads up to 6 days ago and future."""
+    def test_filter_last_7_days_includes_day_6(self):
+        """Filter 'Last 7 Days' includes leads up to 6 days ago (7 days total)."""
         leads = [
-            {"Days": -1, "Lead Name": "Future"},
             {"Days": 0, "Lead Name": "Today"},
             {"Days": 6, "Lead Name": "6 Days Ago"},
             {"Days": 7, "Lead Name": "7 Days Ago"},
         ]
 
-        result = filter_by_date_range(leads, "Last 7 Days + Future")
+        result = filter_by_date_range(leads, "Last 7 Days")
 
-        assert len(result) == 3
+        assert len(result) == 2
         names = [lead["Lead Name"] for lead in result]
-        assert "Future" in names
         assert "Today" in names
         assert "6 Days Ago" in names
         assert "7 Days Ago" not in names
 
-    def test_filter_last_7_days_plus_future_excludes_day_7(self):
-        """Filter 'Last 7 Days + Future' excludes leads 7+ days ago."""
+    def test_filter_last_7_days_excludes_day_7(self):
+        """Filter 'Last 7 Days' excludes leads 7+ days ago."""
         leads = [
             {"Days": 3, "Lead Name": "3 Days Ago"},
             {"Days": 10, "Lead Name": "10 Days Ago"},
         ]
 
-        result = filter_by_date_range(leads, "Last 7 Days + Future")
+        result = filter_by_date_range(leads, "Last 7 Days")
 
         assert len(result) == 1
         assert result[0]["Lead Name"] == "3 Days Ago"
 
-    def test_filter_last_30_days_plus_future_includes_day_29(self):
-        """Filter 'Last 30 Days + Future' includes leads up to 29 days ago."""
+    def test_filter_last_30_days_includes_day_29(self):
+        """Filter 'Last 30 Days' includes leads up to 29 days ago (30 days total)."""
         leads = [
             {"Days": 5, "Lead Name": "5 Days"},
             {"Days": 29, "Lead Name": "29 Days"},
             {"Days": 30, "Lead Name": "30 Days"},
         ]
 
-        result = filter_by_date_range(leads, "Last 30 Days + Future")
+        result = filter_by_date_range(leads, "Last 30 Days")
 
         assert len(result) == 2
         names = [lead["Lead Name"] for lead in result]
@@ -1177,27 +1160,27 @@ class TestFilterByDateRange:
         assert "29 Days" in names
         assert "30 Days" not in names
 
-    def test_filter_last_30_days_plus_future_excludes_day_30(self):
-        """Filter 'Last 30 Days + Future' excludes leads 30+ days ago."""
+    def test_filter_last_30_days_excludes_day_30(self):
+        """Filter 'Last 30 Days' excludes leads 30+ days ago."""
         leads = [
             {"Days": 15, "Lead Name": "15 Days"},
             {"Days": 45, "Lead Name": "45 Days"},
         ]
 
-        result = filter_by_date_range(leads, "Last 30 Days + Future")
+        result = filter_by_date_range(leads, "Last 30 Days")
 
         assert len(result) == 1
         assert result[0]["Lead Name"] == "15 Days"
 
-    def test_filter_last_6_months_excludes_future(self):
-        """'Last 6 Months' filter excludes future appointments (negative Days)."""
+    def test_filter_excludes_future_appointments(self):
+        """Date range filters exclude future appointments (negative Days)."""
         leads = [
             {"Days": -2, "Lead Name": "Future"},
             {"Days": 0, "Lead Name": "Today"},
             {"Days": 3, "Lead Name": "Past"},
         ]
 
-        result = filter_by_date_range(leads, "Last 6 Months")
+        result = filter_by_date_range(leads, "Last 7 Days")
 
         assert len(result) == 2
         names = [lead["Lead Name"] for lead in result]
@@ -1210,7 +1193,7 @@ class TestFilterByDateRange:
             {"Days": 3, "Lead Name": "Has Date"},
         ]
 
-        result = filter_by_date_range(leads, "Last 7 Days + Future")
+        result = filter_by_date_range(leads, "Last 7 Days")
 
         assert len(result) == 1
         assert result[0]["Lead Name"] == "Has Date"
@@ -1225,10 +1208,10 @@ class TestApplyFilters:
             {"Stage": "Appt Set", "Locator": "Marcus", "Days": 3},
             {"Stage": "Appt Set", "Locator": "Sarah", "Days": 3},
             {"Stage": "Green", "Locator": "Marcus", "Days": 3},
-            {"Stage": "Appt Set", "Locator": "Marcus", "Days": 10},  # Outside Last 7 Days + Future (>6)
+            {"Stage": "Appt Set", "Locator": "Marcus", "Days": 10},  # Outside Last 7 Days (>6)
         ]
 
-        result = apply_filters(leads, "Appt Set", "Marcus", "Last 7 Days + Future")
+        result = apply_filters(leads, "Appt Set", "Marcus", "Last 7 Days")
 
         assert len(result) == 1
         assert result[0]["Stage"] == "Appt Set"
