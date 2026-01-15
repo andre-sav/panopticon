@@ -1087,7 +1087,8 @@ def display_conversion_funnel(display_data: list[dict]):
         hovertext=hover_text,
         hoverinfo="text",
         marker=dict(
-            color=["#17a2b8", "#28a745", "#ffc107", "#28a745"],
+            # Blue → Teal → Yellow → Green progression
+            color=["#17a2b8", "#20c997", "#ffc107", "#28a745"],
             line=dict(width=2, color="white")
         ),
         connector=dict(line=dict(color="lightgray", width=1)),

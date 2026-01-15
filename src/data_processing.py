@@ -419,16 +419,19 @@ def get_lead_status_v2(
     """
     Determine lead status with detailed classification reason.
 
-    New classification logic:
+    Classification logic (in order):
     1. Terminal stage → Healthy ("Completed - [stage]")
-    2. Delivery record exists → Healthy ("Delivery record found: [name]")
-    3. Recent note since appointment → Healthy ("Actively worked - note added [date]")
-    4. Has misc notes → Healthy ("Has notes on record")
-    5. No activity for 14+ days:
+    2. Future appointment:
+       - Not acknowledged → At Risk ("Appointment on [date] not yet acknowledged")
+       - Acknowledged → Healthy ("Appointment scheduled for [date]")
+    3. Delivery record exists → Healthy ("Delivery record found: [name]")
+    4. Recent note since appointment → Healthy ("Actively worked - note added [date]")
+    5. Has misc notes → Healthy ("Has notes on record")
+    6. No activity for 14+ days:
        - "Green - Approved By Locator" → Needs Attention ("Approved but no progress")
        - Other stages → Stale ("No activity for X days")
-    6. Progressed from unacknowledged → Needs Attention ("Stage progressed but no notes")
-    7. Never acknowledged → At Risk ("Appointment has never been acknowledged")
+    7. Progressed from unacknowledged → Needs Attention ("Stage progressed but no notes")
+    8. Never acknowledged → At Risk ("Appointment has never been acknowledged")
 
     Args:
         lead: Lead dictionary with 'id', 'name', 'current_stage', 'appointment_date'
@@ -466,7 +469,24 @@ def get_lead_status_v2(
     if stage_lower in terminal_stages:
         return ("healthy", f"Completed - {current_stage}")
 
-    # 2. Check for matching delivery record
+    # 2. Future appointments - check if acknowledged
+    if appointment_date:
+        now = datetime.now(timezone.utc)
+        # Handle both datetime objects and date objects
+        if hasattr(appointment_date, 'tzinfo'):
+            appt_dt = appointment_date
+        else:
+            appt_dt = datetime.combine(appointment_date, datetime.min.time()).replace(tzinfo=timezone.utc)
+
+        if appt_dt > now:
+            date_str = appt_dt.strftime("%b %d, %Y")
+            # Future + unacknowledged = At Risk
+            if _is_unacknowledged_stage(current_stage):
+                return ("at_risk", f"Appointment on {date_str} not yet acknowledged")
+            # Future + acknowledged = Healthy (waiting for appointment)
+            return ("healthy", f"Appointment scheduled for {date_str}")
+
+    # 3. Check for matching delivery record
     matching_delivery = find_matching_delivery(lead_id, lead_name, deliveries, lead_address, lead_zip)
     if matching_delivery:
         delivery_name = matching_delivery.get("name", "Unknown")
