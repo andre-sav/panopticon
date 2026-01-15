@@ -92,16 +92,13 @@ def get_cached_stage_history(lead_id: str) -> Optional[list]:
 
 
 # Chunk size for batch queries (avoids URL length limits in Supabase)
-# 500 is safe for most URL length limits while reducing round trips
-BATCH_QUERY_CHUNK_SIZE = 500
+BATCH_QUERY_CHUNK_SIZE = 100
 
 
 def get_cached_stage_histories_batch(lead_ids: list[str]) -> dict[str, list]:
     """
     Get cached stage history for multiple leads.
 
-    Uses session state to cache Supabase responses within a render cycle,
-    preventing duplicate network calls on Streamlit reruns.
     Chunks requests to avoid URL length limits with large IN clauses.
 
     Args:
@@ -110,40 +107,16 @@ def get_cached_stage_histories_batch(lead_ids: list[str]) -> dict[str, list]:
     Returns:
         Dict mapping lead_id to stage history list. Missing leads not included.
     """
-    if not lead_ids:
+    client = _get_supabase_client()
+    if not client or not lead_ids:
         return {}
 
-    # Check session state cache first (per-render deduplication)
-    cache_key = "stage_histories_session"
-    if cache_key not in st.session_state:
-        st.session_state[cache_key] = {}
-
-    session_cache = st.session_state[cache_key]
-
-    # Find which lead_ids we already have in session cache
     result = {}
-    missing_ids = []
-    for lead_id in lead_ids:
-        if lead_id in session_cache:
-            result[lead_id] = session_cache[lead_id]
-        else:
-            missing_ids.append(lead_id)
-
-    # If all requested IDs are cached, return early
-    if not missing_ids:
-        logger.debug("All %d stage histories served from session cache", len(result))
-        return result
-
-    # Query Supabase only for missing IDs
-    client = _get_supabase_client()
-    if not client:
-        return result
-
     now = datetime.now(timezone.utc)
 
     # Chunk into smaller batches to avoid URL length limits
-    for i in range(0, len(missing_ids), BATCH_QUERY_CHUNK_SIZE):
-        chunk = missing_ids[i:i + BATCH_QUERY_CHUNK_SIZE]
+    for i in range(0, len(lead_ids), BATCH_QUERY_CHUNK_SIZE):
+        chunk = lead_ids[i:i + BATCH_QUERY_CHUNK_SIZE]
         try:
             response = (
                 client.table("stage_history_cache")
@@ -157,16 +130,13 @@ def get_cached_stage_histories_batch(lead_ids: list[str]) -> dict[str, list]:
                     cached_at = datetime.fromisoformat(record["cached_at"].replace("Z", "+00:00"))
                     # Check if cache is still valid
                     if now - cached_at <= timedelta(hours=CACHE_TTL_HOURS):
-                        lead_id = record["lead_id"]
-                        history = record["stage_history"]
-                        result[lead_id] = history
-                        session_cache[lead_id] = history  # Store in session cache
+                        result[record["lead_id"]] = record["stage_history"]
 
         except Exception as e:
             logger.error("Error reading batch stage history from cache: %s", e)
             # Continue with other chunks even if one fails
 
-    logger.debug("Batch cache hit for %d/%d leads (%d from session)", len(result), len(lead_ids), len(lead_ids) - len(missing_ids))
+    logger.debug("Batch cache hit for %d/%d leads", len(result), len(lead_ids))
     return result
 
 
@@ -279,7 +249,7 @@ def get_cached_leads() -> Optional[list]:
 
     Returns:
         List of lead dictionaries if cached and not expired, None otherwise.
-        Also stores the cached_at timestamp in session state for get_leads_cache_age().
+        Also returns the cached_at timestamp for display purposes.
     """
     client = _get_supabase_client()
     if not client:
@@ -299,9 +269,6 @@ def get_cached_leads() -> Optional[list]:
             logger.info("Leads cache expired")
             return None
 
-        # Store cached_at in session state to avoid duplicate query in get_leads_cache_age()
-        st.session_state._leads_cached_at = cached_at
-
         logger.info("Leads cache hit (%d leads)", len(record["data"]))
         return record["data"]
 
@@ -314,16 +281,9 @@ def get_leads_cache_age() -> Optional[datetime]:
     """
     Get the timestamp when leads were last cached.
 
-    Checks session state first (populated by get_cached_leads) to avoid
-    duplicate Supabase queries.
-
     Returns:
         datetime of when cache was last updated, or None if no cache
     """
-    # Check session state first (populated by get_cached_leads)
-    if "_leads_cached_at" in st.session_state:
-        return st.session_state._leads_cached_at
-
     client = _get_supabase_client()
     if not client:
         return None
