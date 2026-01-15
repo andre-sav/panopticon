@@ -261,10 +261,12 @@ def display_header():
             clear_deliveries_cache()
 
             # Clear stage history and notes from session state (will be re-fetched)
+            # Also clear the session-level cache dicts
             keys_to_clear = [k for k in st.session_state.keys()
                              if k.startswith("stage_history_") or k.startswith("notes_")]
             for key in keys_to_clear:
                 st.session_state.pop(key, None)
+            st.session_state.pop("stage_histories_session", None)
 
             st.rerun()
 
@@ -300,6 +302,11 @@ def display_partial_warning():
 
 def initialize_filter_and_sort_state():
     """Initialize filter and sort session state with defaults."""
+    # Apply pending stage filter from chart clicks (must happen before widget instantiation)
+    if "_pending_filter_stage" in st.session_state:
+        st.session_state.filter_stage = st.session_state._pending_filter_stage
+        del st.session_state._pending_filter_stage
+
     if "filter_stage" not in st.session_state:
         st.session_state.filter_stage = ALL_STAGES
     if "filter_locator" not in st.session_state:
@@ -597,7 +604,7 @@ def display_priority_list(display_data: list[dict], max_visible: int = 5):
         <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 0.75rem 1rem;
                     border-radius: 0 4px 4px 0; margin-bottom: 0.5rem;">
             <strong>⚠️ {total_count} lead{'s' if total_count != 1 else ''} at risk</strong>
-            <span style="color: #856404;"> (Appointment unacknowledged by Locator)</span>
+            <span style="color: #856404;"> (Appointment not yet acknowledged)</span>
         </div>
     """, unsafe_allow_html=True)
 
@@ -661,7 +668,7 @@ def display_needs_attention_list(display_data: list[dict], max_visible: int = 5)
     st.markdown(f"""
         <div style="background: #fff3cd; border-left: 4px solid #fd7e14; padding: 0.75rem 1rem; margin-bottom: 0.5rem; border-radius: 0 4px 4px 0;">
             <strong style="color: #856404;">🟠 {total_count} lead{'s' if total_count != 1 else ''} need{'s' if total_count == 1 else ''} attention</strong>
-            <span style="color: #856404;"> (have not progressed from Green - Approved by Locator in 7+ days)</span>
+            <span style="color: #856404;"> (No recent progress or activity)</span>
         </div>
     """, unsafe_allow_html=True)
 
@@ -783,12 +790,13 @@ def display_stage_pipeline(display_data: list[dict]):
     event = st.plotly_chart(fig, width="stretch", on_select="rerun", key="stage_pipeline_chart")
 
     # Handle click events - filter to selected stage
+    # Use _pending_filter_stage to avoid modifying widget-bound state directly
     if event and event.selection and event.selection.points:
         clicked_point = event.selection.points[0]
         # Get the stage name from the y-axis value
         clicked_stage = clicked_point.get("y")
         if clicked_stage and clicked_stage != st.session_state.get("filter_stage"):
-            st.session_state.filter_stage = clicked_stage
+            st.session_state._pending_filter_stage = clicked_stage
             st.session_state.leads_page = 0  # Reset pagination when filter changes
             st.rerun()
 
@@ -1307,33 +1315,51 @@ def display_lead_detail(lead: dict):
         if not phone and not email:
             st.write("No contact info available")
 
-    # Notes section - use prefetched notes from session state
+    # Notes section - use prefetched notes from session state, fall back to misc notes fields
     st.divider()
     lead_id = lead.get("id")
+    note_content = ""
+    note_time = None
+    note_source = None  # Track where the note came from
+
     if lead_id:
+        # First try Notes related list
         cache_key = f"notes_{lead_id}"
         note_data = st.session_state.get(cache_key, {"content": "", "time": None})
         note_content = note_data.get("content", "") if isinstance(note_data, dict) else note_data
         note_time = note_data.get("time") if isinstance(note_data, dict) else None
+        if note_content:
+            note_source = "notes"
 
-        # Format the timestamp if available
-        if note_time:
-            from src.zoho_client import parse_zoho_date
-            parsed_time = parse_zoho_date(note_time) if isinstance(note_time, str) else note_time
-            if parsed_time:
-                time_str = parsed_time.strftime("%b %d, %Y at %I:%M %p")
-                st.markdown(f"**Latest Note** ({time_str})")
-            else:
-                st.markdown("**Latest Note**")
+    # Fall back to misc notes fields if no Notes related list content
+    if not note_content:
+        misc_notes_long = lead.get("misc_notes_long") or lead.get("Misc_Notes_Long") or ""
+        misc_notes = lead.get("misc_notes") or lead.get("Misc_Notes") or ""
+        # Prefer misc_notes_long as it's typically more detailed
+        if misc_notes_long.strip():
+            note_content = misc_notes_long.strip()
+            note_source = "misc_long"
+        elif misc_notes.strip():
+            note_content = misc_notes.strip()
+            note_source = "misc"
+
+    # Display the note
+    if note_time:
+        from src.zoho_client import parse_zoho_date
+        parsed_time = parse_zoho_date(note_time) if isinstance(note_time, str) else note_time
+        if parsed_time:
+            time_str = parsed_time.strftime("%b %d, %Y at %I:%M %p")
+            st.markdown(f"**Latest Note** ({time_str})")
         else:
             st.markdown("**Latest Note**")
-
-        if note_content:
-            st.write(note_content)
-        else:
-            st.write("No notes available")
+    elif note_source in ("misc_long", "misc"):
+        st.markdown("**Latest Note** (from Misc Notes)")
     else:
         st.markdown("**Latest Note**")
+
+    if note_content:
+        st.write(note_content)
+    else:
         st.write("No notes available")
 
     # Classification Reason section
@@ -1458,7 +1484,8 @@ def _prefetch_stage_histories(leads: list[dict]):
     Uses batch Supabase cache query AND concurrent Zoho API fetching for
     any leads not in cache. This eliminates the N+1 query pattern.
 
-    Results are stored in session state for use by display_stage_history().
+    Results are stored in session state for use by display_stage_history()
+    and get_raw_stage_histories().
 
     Args:
         leads: List of formatted lead dictionaries with 'id' and 'Stage' fields
@@ -1481,11 +1508,34 @@ def _prefetch_stage_histories(leads: list[dict]):
     # Batch fetch: checks Supabase cache AND fetches uncached from API concurrently
     histories = get_stage_histories_batch(leads_to_fetch)
 
-    # Store results in session state
+    # Store results in session state (both raw and formatted)
     for lead_id, history in histories.items():
+        # Store formatted for display_stage_history()
         cache_key = f"stage_history_{lead_id}"
         st.session_state[cache_key] = format_stage_history(history)
         st.session_state[f"stage_history_error_{lead_id}"] = False
+        # Store raw for v2 classification
+        st.session_state[f"stage_history_raw_{lead_id}"] = history
+
+
+def get_raw_stage_histories(lead_ids: list[str]) -> dict[str, list]:
+    """Get raw stage histories from session state.
+
+    This retrieves the raw (unformatted) stage histories that were
+    prefetched by _prefetch_stage_histories(). Used for v2 classification.
+
+    Args:
+        lead_ids: List of lead IDs to get histories for
+
+    Returns:
+        Dict mapping lead_id to raw stage history list
+    """
+    result = {}
+    for lead_id in lead_ids:
+        raw_key = f"stage_history_raw_{lead_id}"
+        if raw_key in st.session_state:
+            result[lead_id] = st.session_state[raw_key]
+    return result
 
 
 def _prefetch_notes(leads: list[dict]):
@@ -1516,6 +1566,38 @@ def _prefetch_notes(leads: list[dict]):
     for lead_id in lead_ids_to_fetch:
         cache_key = f"notes_{lead_id}"
         st.session_state[cache_key] = notes_map.get(lead_id, {"content": "", "time": None})
+
+
+def _cleanup_stale_session_state(current_lead_ids: set[str]):
+    """Remove session state entries for leads no longer in the dataset.
+
+    This prevents unbounded memory growth over extended sessions as
+    different lead sets are loaded.
+
+    Args:
+        current_lead_ids: Set of lead IDs currently in the dataset
+    """
+    # Prefixes that store per-lead data (order matters - check longer prefixes first)
+    prefixes = [
+        "stage_history_error_",
+        "stage_history_raw_",
+        "stage_history_",
+        "notes_",
+    ]
+
+    # Find stale keys to remove
+    keys_to_remove = []
+    for key in st.session_state.keys():
+        for prefix in prefixes:
+            if key.startswith(prefix):
+                lead_id = key[len(prefix):]
+                if lead_id not in current_lead_ids:
+                    keys_to_remove.append(key)
+                break  # Don't check other prefixes for this key
+
+    # Remove stale keys
+    for key in keys_to_remove:
+        del st.session_state[key]
 
 
 def display_lead_cards(leads: list[dict]):
@@ -1557,16 +1639,23 @@ def _capture_daily_snapshot(display_data: list[dict]):
     """Capture today's status snapshot if not already captured.
 
     Called once per day on dashboard load to track trends.
+    Uses session state to avoid repeated Supabase queries on reruns.
     """
-    from src.cache import get_today_snapshot, save_status_snapshot
-
-    # Check if already captured today
-    if get_today_snapshot() is not None:
+    # Check session state first to avoid repeated Supabase queries
+    if st.session_state.get("_snapshot_checked_today"):
         return
 
-    # Calculate counts from unfiltered data
+    from src.cache import get_today_snapshot, save_status_snapshot
+
+    # Check if already captured today (Supabase query)
+    if get_today_snapshot() is not None:
+        st.session_state._snapshot_checked_today = True
+        return
+
+    # Calculate counts from unfiltered data and save
     counts = count_leads_by_status(display_data)
     save_status_snapshot(counts)
+    st.session_state._snapshot_checked_today = True
 
 
 def display_dashboard():
@@ -1605,16 +1694,18 @@ def display_dashboard():
 
     # Display table or empty state
     if leads:
+        # Clean up stale session state entries for leads no longer in dataset
+        current_lead_ids = {lead.get("id") for lead in leads if lead.get("id")}
+        _cleanup_stale_session_state(current_lead_ids)
+
         # Prefetch stage histories and notes for classification
         # This must happen before format_leads_for_display for v2 classification
         _prefetch_stage_histories(leads)
         _prefetch_notes(leads)
 
-        # Batch fetch raw stage histories for v2 classification (single query)
-        from src.cache import get_cached_stage_histories_batch
-
+        # Get raw stage histories from session state (already prefetched above)
         lead_ids = [lead.get("id") for lead in leads if lead.get("id")]
-        stage_histories = get_cached_stage_histories_batch(lead_ids)
+        stage_histories = get_raw_stage_histories(lead_ids)
 
         # Collect notes from session state (already prefetched)
         notes = {}
