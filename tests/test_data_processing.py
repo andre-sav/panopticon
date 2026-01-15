@@ -1329,18 +1329,18 @@ class TestGetUniqueLocators:
 class TestSortLeads:
     """Tests for sort_leads function (Story 3.2)."""
 
-    def test_default_sort_uses_urgency(self):
-        """Default sort option uses sort_by_urgency (AC#3)."""
+    def test_default_sort_uses_last_activity(self):
+        """Default sort option sorts by last activity (most recent first)."""
         leads = [
-            {"Status": "🟢 healthy", "Days": 2, "Lead Name": "Healthy"},
-            {"Status": "🔴 stale", "Days": 10, "Lead Name": "Stale"},
+            {"Status": "🟢 healthy", "Days": 2, "Lead Name": "Old Activity", "days_since_activity": 10},
+            {"Status": "🔴 stale", "Days": 10, "Lead Name": "Recent Activity", "days_since_activity": 1},
         ]
 
         result = sort_leads(leads, DEFAULT_SORT)
 
-        # Stale should come first (urgency sort)
-        assert result[0]["Lead Name"] == "Stale"
-        assert result[1]["Lead Name"] == "Healthy"
+        # Most recent activity (lowest days_since_activity) should come first
+        assert result[0]["Lead Name"] == "Recent Activity"
+        assert result[1]["Lead Name"] == "Old Activity"
 
     def test_days_most_first_descending(self):
         """Days (Most First) sorts by days descending."""
@@ -1506,17 +1506,17 @@ class TestSortLeads:
         assert result[0]["Locator"] == "Marcus Johnson"
         assert result[1]["Locator"] == "—"
 
-    def test_unknown_sort_option_uses_urgency(self):
-        """Unknown sort option falls back to urgency sort."""
+    def test_unknown_sort_option_uses_last_activity(self):
+        """Unknown sort option falls back to last activity sort."""
         leads = [
-            {"Status": "🟢 healthy", "Days": 2, "Lead Name": "Healthy"},
-            {"Status": "🔴 stale", "Days": 10, "Lead Name": "Stale"},
+            {"Status": "🟢 healthy", "Days": 2, "Lead Name": "Old Activity", "days_since_activity": 10},
+            {"Status": "🔴 stale", "Days": 10, "Lead Name": "Recent Activity", "days_since_activity": 1},
         ]
 
         result = sort_leads(leads, "Unknown Option")
 
-        # Should fall back to urgency sort
-        assert result[0]["Lead Name"] == "Stale"
+        # Should fall back to last activity sort (most recent first)
+        assert result[0]["Lead Name"] == "Recent Activity"
 
     def test_empty_list_returns_empty(self):
         """Sorting empty list returns empty list."""

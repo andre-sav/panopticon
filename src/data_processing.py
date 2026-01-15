@@ -707,6 +707,7 @@ def format_leads_for_display(
         - Lead Name
         - Appointment Date
         - Days (days since appointment)
+        - days_since_activity (days since last stage change, note, or modification)
         - Status: stale, at_risk, needs_attention, healthy
         - classification_reason: Human-readable reason for the classification
         - Stage
@@ -725,6 +726,7 @@ def format_leads_for_display(
 
         status = None
         classification_reason = None
+        days_since_activity = None
 
         if use_v2_classification and lead_id:
             # Use new v2 classification with full context
@@ -733,6 +735,12 @@ def format_leads_for_display(
             status, classification_reason = get_lead_status_v2(
                 lead, lead_stage_history, lead_note, deliveries
             )
+            # Calculate days since last activity for sorting
+            days_since_activity = get_days_since_last_activity(
+                lead_stage_history,
+                lead_note,
+                lead.get("modified_time"),
+            )
         else:
             # Fallback to legacy classification
             days_since_modified = None
@@ -740,12 +748,15 @@ def format_leads_for_display(
                 days_since_modified = calculate_days_since(lead["modified_time"])
             status = get_lead_status(days, stage, days_since_modified) if days is not None else None
             classification_reason = None
+            # Use days since modification as activity proxy
+            days_since_activity = days_since_modified
 
         result.append({
             "id": lead_id,
             "Lead Name": safe_display(lead.get("name")),
             "Appointment Date": format_date(lead.get("appointment_date")),
             "Days": days,
+            "days_since_activity": days_since_activity,
             "Status": format_status_display(status),
             "classification_reason": classification_reason,
             "Stage": safe_display(lead.get("current_stage")),
@@ -1148,7 +1159,9 @@ def get_unique_locators(leads: list[dict]) -> list[str]:
 
 
 # Sort constants
-DEFAULT_SORT = "Default (Urgency)"
+DEFAULT_SORT = "Last Activity"
+SORT_LAST_ACTIVITY = "Last Activity"
+SORT_URGENCY = "Urgency"
 SORT_DAYS_MOST = "Days (Most First)"
 SORT_DAYS_LEAST = "Days (Least First)"
 SORT_DATE_NEWEST = "Appointment Date (Newest)"
@@ -1158,7 +1171,8 @@ SORT_STAGE_AZ = "Stage (A-Z)"
 SORT_LOCATOR_AZ = "Locator (A-Z)"
 
 SORT_OPTIONS = [
-    DEFAULT_SORT,
+    SORT_LAST_ACTIVITY,
+    SORT_URGENCY,
     SORT_DAYS_MOST,
     SORT_DAYS_LEAST,
     SORT_DATE_NEWEST,
@@ -1192,7 +1206,14 @@ def sort_leads(leads: list[dict], sort_option: str) -> list[dict]:
     Returns:
         New list sorted by the specified option
     """
-    if sort_option == DEFAULT_SORT:
+    # Last Activity: most recent activity first (lowest days_since_activity)
+    if sort_option == SORT_LAST_ACTIVITY:
+        return sorted(
+            leads,
+            key=lambda x: (x.get("days_since_activity") if x.get("days_since_activity") is not None else float("inf"))
+        )
+
+    if sort_option == SORT_URGENCY:
         return sort_by_urgency(leads)
 
     # Days descending (most days first) - same logic for "oldest" dates
@@ -1218,8 +1239,11 @@ def sort_leads(leads: list[dict], sort_option: str) -> list[dict]:
     if sort_option == SORT_LOCATOR_AZ:
         return sorted(leads, key=lambda x: _sort_key_string(x.get("Locator"), "Locator"))
 
-    # Fallback to urgency sort
-    return sort_by_urgency(leads)
+    # Fallback to last activity sort (default)
+    return sorted(
+        leads,
+        key=lambda x: (x.get("days_since_activity") if x.get("days_since_activity") is not None else float("inf"))
+    )
 
 
 def format_last_updated(timestamp: Optional[datetime]) -> str:
