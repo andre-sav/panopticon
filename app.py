@@ -247,7 +247,7 @@ def display_header():
 
     with col2:
         is_refreshing = st.session_state.get("refreshing", False)
-        if st.button("🔄 Refresh", disabled=is_refreshing, use_container_width=True):
+        if st.button("🔄 Refresh", disabled=is_refreshing, width="stretch"):
             from src.cache import clear_notes_cache, clear_deliveries_cache
 
             # Clear session state and set flag to bypass Supabase cache
@@ -409,7 +409,7 @@ def display_filters(display_data: list[dict]):
         if filters_active:
             st.button(
                 "Reset All Filters",
-                use_container_width=True,
+                width="stretch",
                 on_click=_reset_all_filters,
             )
 
@@ -832,7 +832,7 @@ def display_locator_workload(display_data: list[dict]):
     st.dataframe(
         df,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "Locator": st.column_config.TextColumn("Locator", width="medium"),
             "Total": st.column_config.NumberColumn("Total", width="small"),
@@ -1378,7 +1378,7 @@ def display_lead_detail(lead: dict):
     # Back to top button
     col1, col2, col3 = st.columns([2, 1, 1])
     with col3:
-        if st.button("↑ Back to top", key=f"back_top_{lead.get('id', '')}", use_container_width=True):
+        if st.button("↑ Back to top", key=f"back_top_{lead.get('id', '')}", width="stretch"):
             st.session_state.scroll_to_top = True
             st.rerun()
 
