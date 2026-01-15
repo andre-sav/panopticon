@@ -425,13 +425,15 @@ def get_lead_status_v2(
        - Not acknowledged → At Risk ("Appointment on [date] not yet acknowledged")
        - Acknowledged → Healthy ("Appointment scheduled for [date]")
     3. Delivery record exists → Healthy ("Delivery record found: [name]")
-    4. Recent note since appointment → Healthy ("Actively worked - note added [date]")
-    5. Has misc notes → Healthy ("Has notes on record")
-    6. No activity for 14+ days:
+    4. Recent note since appointment (timestamped) → Healthy ("Actively worked - note added [date]")
+    5. No activity for 14+ days:
        - "Green - Approved By Locator" → Needs Attention ("Approved but no progress")
        - Other stages → Stale ("No activity for X days")
-    7. Progressed from unacknowledged → Needs Attention ("Stage progressed but no notes")
-    8. Never acknowledged → At Risk ("Appointment has never been acknowledged")
+    6. Progressed from unacknowledged → Needs Attention ("Stage progressed but no notes")
+    7. Never acknowledged → At Risk ("Appointment has never been acknowledged")
+
+    Note: Misc Notes fields are displayed in UI but NOT used for classification
+    because they lack timestamps - we can't verify when they were written.
 
     Args:
         lead: Lead dictionary with 'id', 'name', 'current_stage', 'appointment_date'
@@ -498,17 +500,14 @@ def get_lead_status_v2(
             return ("healthy", f"Delivery record found: {delivery_name}")
 
     # 3. Check for recent note since appointment (from Notes related list)
+    # Only timestamped notes count - we can verify they're recent
     note_time = get_note_time_if_after_appointment(latest_note, appointment_date)
     if note_time:
         date_str = note_time.strftime("%b %d, %Y")
         return ("healthy", f"Actively worked - note added {date_str}")
 
-    # 3b. Check for misc notes fields on the record itself
-    # Check both snake_case (mapped) and original Zoho keys for consistency with display code
-    misc_notes = lead.get("misc_notes") or lead.get("Misc_Notes") or ""
-    misc_notes_long = lead.get("misc_notes_long") or lead.get("Misc_Notes_Long") or ""
-    if misc_notes.strip() or misc_notes_long.strip():
-        return ("healthy", "Has notes on record (Misc Notes)")
+    # Note: Misc Notes fields are displayed in UI but NOT used for classification
+    # because they lack timestamps - we can't verify when they were written
 
     # 4. Check for no activity (Stale or Needs Attention depending on stage)
     days_since_activity = get_days_since_last_activity(stage_history, latest_note, modified_time)

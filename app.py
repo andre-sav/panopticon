@@ -1681,22 +1681,26 @@ def display_dashboard():
 
         if is_refresh:
             # Show detailed progress for manual refresh
-            with st.status("Refreshing data from Zoho CRM...", expanded=True) as status:
-                st.write("Fetching leads...")
-                fetch_and_cache_leads(bypass_cache=bypass_cache)
+            progress_bar = st.progress(0, text="Refreshing data from Zoho CRM...")
 
-                st.write("Fetching deliveries...")
-                fetch_and_cache_deliveries(bypass_cache=bypass_cache)
+            progress_bar.progress(10, text="Fetching leads...")
+            fetch_and_cache_leads(bypass_cache=bypass_cache)
 
-                leads = st.session_state.get("leads", [])
-                if leads:
-                    st.write(f"Loading stage histories for {len(leads)} leads...")
-                    _prefetch_stage_histories(leads)
+            progress_bar.progress(30, text="Fetching deliveries...")
+            fetch_and_cache_deliveries(bypass_cache=bypass_cache)
 
-                    st.write("Loading notes...")
-                    _prefetch_notes(leads)
+            leads = st.session_state.get("leads", [])
+            if leads:
+                progress_bar.progress(50, text="Loading stage histories...")
+                _prefetch_stage_histories(leads)
 
-                status.update(label="Refresh complete!", state="complete", expanded=False)
+                progress_bar.progress(80, text="Loading notes...")
+                _prefetch_notes(leads)
+
+            progress_bar.progress(100, text="Refresh complete!")
+            import time
+            time.sleep(0.5)  # Brief pause to show completion
+            progress_bar.empty()  # Remove progress bar
         else:
             # Simple spinner for initial page load
             with st.spinner("Loading leads..."):
